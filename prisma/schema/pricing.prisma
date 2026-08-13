@@ -1,0 +1,154 @@
+// ---------------------------------------------------------------------------
+// Devises, pays, prix et fiscalité
+// ---------------------------------------------------------------------------
+
+model Currency {
+  code      String   @id @db.Char(3)
+  symbol    String
+  name      String
+  /// Nombre de décimales (2 pour EUR/USD, 0 pour JPY/XOF).
+  decimals  Int      @default(2)
+  isDefault Boolean  @default(false)
+  isActive  Boolean  @default(true)
+  /// Arrondi psychologique appliqué aux prix convertis (ex. ",99").
+  rounding  Decimal? @db.Decimal(10, 4)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users         User[]
+  countries     Country[]
+  prices        Price[]
+  carts         Cart[]
+  orders        Order[]
+  giftCards     GiftCard[]
+  shippingRates ShippingRate[]
+  ratesFrom     ExchangeRate[] @relation("ExchangeRateBase")
+  ratesTo       ExchangeRate[] @relation("ExchangeRateQuote")
+}
+
+/// Taux de change de secours quand aucun prix n'est saisi dans la devise demandée.
+model ExchangeRate {
+  id        String   @id @default(cuid())
+  baseCode  String   @db.Char(3)
+  base      Currency @relation("ExchangeRateBase", fields: [baseCode], references: [code])
+  quoteCode String   @db.Char(3)
+  quote     Currency @relation("ExchangeRateQuote", fields: [quoteCode], references: [code])
+  rate      Decimal  @db.Decimal(18, 8)
+  fetchedAt DateTime @default(now())
+
+  @@unique([baseCode, quoteCode, fetchedAt])
+  @@index([baseCode, quoteCode, fetchedAt])
+}
+
+model Country {
+  code             String   @id @db.Char(2)
+  name             String
+  nameEn           String?
+  currencyCode     String   @db.Char(3)
+  currency         Currency @relation(fields: [currencyCode], references: [code])
+  isShippingActive Boolean  @default(false)
+  isBillingActive  Boolean  @default(true)
+  /// L'État/province est obligatoire pour ce pays (US, CA) — impacte le calcul de taxe.
+  requiresRegion   Boolean  @default(false)
+  isEuMember       Boolean  @default(false)
+  phonePrefix      String?
+
+  /// Régime d'affichage des prix. TTC en UE (obligation légale d'afficher le
+  /// prix payé), hors taxe en Amérique du Nord où la taxe s'ajoute à la
+  /// caisse. Un réglage global ne peut pas servir les deux marchés.
+  pricesIncludeTax Boolean  @default(true)
+
+  addresses    Address[]
+  taxZones     TaxZoneCountry[]
+  orderAddress OrderAddress[]
+}
+
+/// Classe fiscale d'un produit : le taux applicable dépend du couple (zone, classe).
+/// Ex. alimentaire 5,5 % vs standard 20 % en France.
+model TaxClass {
+  id          String   @id @default(cuid())
+  code        String   @unique
+  name        String
+  description String?
+  isDefault   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  products        Product[]
+  rates           TaxRate[]
+  shippingMethods ShippingMethod[]
+}
+
+/// Regroupement de pays/régions partageant une règle fiscale.
+model TaxZone {
+  id        String   @id @default(cuid())
+  code      String   @unique
+  name      String
+  priority  Int      @default(0)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  countries TaxZoneCountry[]
+  rates     TaxRate[]
+}
+
+model TaxZoneCountry {
+  id          String  @id @default(cuid())
+  taxZoneId   String
+  taxZone     TaxZone @relation(fields: [taxZoneId], references: [id], onDelete: Cascade)
+  countryCode String  @db.Char(2)
+  country     Country @relation(fields: [countryCode], references: [code], onDelete: Cascade)
+  /// Null = tout le pays. Renseigné pour les États américains / provinces canadiennes.
+  region      String?
+  postalCode  String?
+
+  @@unique([taxZoneId, countryCode, region, postalCode])
+  @@index([countryCode, region])
+}
+
+model TaxRate {
+  id                String    @id @default(cuid())
+  taxZoneId         String
+  taxZone           TaxZone   @relation(fields: [taxZoneId], references: [id], onDelete: Cascade)
+  taxClassId        String
+  taxClass          TaxClass  @relation(fields: [taxClassId], references: [id], onDelete: Cascade)
+  name              String
+  ratePercent       Decimal   @db.Decimal(6, 3)
+  /// Taxe cumulative appliquée après les précédentes (TVQ au Québec).
+  isCompound        Boolean   @default(false)
+  priority          Int       @default(0)
+  appliesToShipping Boolean   @default(true)
+  startsAt          DateTime?
+  endsAt            DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@unique([taxZoneId, taxClassId, priority])
+  @@index([taxZoneId, taxClassId])
+}
+
+/// Prix d'une variante. Une ligne par (variante, devise, groupe client, palier de quantité).
+/// Permet le prix fixe par devise, le tarif B2B et la dégressivité.
+model Price {
+  id             String   @id @default(cuid())
+  variantId      String
+  variant        Variant  @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  currencyCode   String   @db.Char(3)
+  currency       Currency @relation(fields: [currencyCode], references: [code])
+  amountCents    Int
+  /// Prix barré affiché (prix de référence avant remise).
+  compareAtCents Int?
+  /// Prix de revient, pour la marge côté admin. Jamais exposé publiquement.
+  costCents      Int?
+
+  customerGroupId String?
+  customerGroup   CustomerGroup? @relation(fields: [customerGroupId], references: [id], onDelete: Cascade)
+  minQuantity     Decimal        @default(1) @db.Decimal(12, 3)
+
+  startsAt  DateTime?
+  endsAt    DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@unique([variantId, currencyCode, customerGroupId, minQuantity])
+  @@index([variantId, currencyCode])
+}

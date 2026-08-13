@@ -1,0 +1,243 @@
+// ---------------------------------------------------------------------------
+// Identité : comptes, authentification (email + Google), adresses, RGPD
+// ---------------------------------------------------------------------------
+
+enum Role {
+  CUSTOMER
+  SUPPORT
+  FULFILLMENT
+  MANAGER
+  ADMIN
+}
+
+enum UserStatus {
+  ACTIVE
+  BLOCKED
+  DELETED
+}
+
+model User {
+  id              String     @id @default(cuid())
+  email           String     @unique
+  emailVerifiedAt DateTime?
+  /// Null pour un compte créé uniquement via Google : gérer ce cas côté
+  /// changement de mot de passe et suppression de compte.
+  passwordHash    String?
+  firstName       String?
+  lastName        String?
+  phone           String?
+  role            Role       @default(CUSTOMER)
+  status          UserStatus @default(ACTIVE)
+  locale          Locale     @default(FR)
+  currencyCode    String     @default("EUR")
+  currency        Currency   @relation(fields: [currencyCode], references: [code])
+
+  groupId String?
+  group   CustomerGroup? @relation(fields: [groupId], references: [id], onDelete: SetNull)
+
+  /// Numéro de TVA intracommunautaire pour les clients professionnels (autoliquidation).
+  vatNumber        String?
+  company          String?
+  acceptsMarketing Boolean @default(false)
+
+  totpSecret     String?
+  totpEnabledAt  DateTime?
+  lastLoginAt    DateTime?
+  failedAttempts Int       @default(0)
+  lockedUntil    DateTime?
+
+  /// RGPD : anonymisation sans perdre l'historique comptable des commandes.
+  anonymizedAt DateTime?
+  deletedAt    DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  accounts             Account[]
+  refreshTokens        RefreshToken[]
+  verificationTokens   VerificationToken[]
+  addresses            Address[]
+  consents             ConsentLog[]
+  dataRequests         DataRequest[]
+  notifications        Notification[]
+  auditLogs            AuditLog[]
+  carts                Cart[]
+  orders               Order[]
+  orderStatusChanges   OrderStatusHistory[]
+  refundsIssued        Refund[]
+  returnRequests       ReturnRequest[]
+  reviews              Review[]
+  wishlists            Wishlist[]
+  loyaltyAccount       LoyaltyAccount?
+  referralsMade        Referral[]            @relation("ReferralReferrer")
+  referralReceived     Referral?             @relation("ReferralReferee")
+  giftCards            GiftCard[]
+  promotionRedemptions PromotionRedemption[]
+  stockMovements       StockMovement[]
+  backInStockRequests  BackInStockRequest[]
+
+  @@index([role, status])
+  @@index([createdAt])
+}
+
+/// Compte OAuth externe. Le rattachement à un `User` ne se fait que sur un
+/// email vérifié par le fournisseur, sinon prise de contrôle de compte possible.
+model Account {
+  id                String    @id @default(cuid())
+  userId            String
+  user              User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  provider          String
+  providerAccountId String
+  email             String?
+  accessToken       String?
+  refreshToken      String?
+  expiresAt         DateTime?
+  createdAt         DateTime  @default(now())
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+}
+
+/// Refresh token en cookie httpOnly, stocké haché, avec rotation et révocation.
+model RefreshToken {
+  id         String    @id @default(cuid())
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash  String    @unique
+  familyId   String
+  ip         String?
+  userAgent  String?
+  expiresAt  DateTime
+  revokedAt  DateTime?
+  replacedBy String?
+  createdAt  DateTime  @default(now())
+
+  @@index([userId, expiresAt])
+  @@index([familyId])
+}
+
+enum VerificationTokenType {
+  EMAIL_VERIFICATION
+  PASSWORD_RESET
+  EMAIL_CHANGE
+  MAGIC_LINK
+}
+
+model VerificationToken {
+  id         String                @id @default(cuid())
+  userId     String?
+  user       User?                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  identifier String
+  tokenHash  String                @unique
+  type       VerificationTokenType
+  payload    Json?
+  expiresAt  DateTime
+  usedAt     DateTime?
+  createdAt  DateTime              @default(now())
+
+  @@index([identifier, type])
+}
+
+enum AddressType {
+  SHIPPING
+  BILLING
+}
+
+model Address {
+  id          String  @id @default(cuid())
+  userId      String?
+  user        User?   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  label       String?
+  firstName   String
+  lastName    String
+  company     String?
+  line1       String
+  line2       String?
+  postalCode  String
+  city        String
+  /// État / province / région — obligatoire aux US et au Canada (taxes).
+  region      String?
+  countryCode String
+  country     Country @relation(fields: [countryCode], references: [code])
+  phone       String?
+  vatNumber   String?
+  /// Instructions de livraison : étage, digicode, ascenseur (livraison de meubles).
+  notes       String?
+
+  isDefaultShipping Boolean @default(false)
+  isDefaultBilling  Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  carts Cart[]
+
+  @@index([userId])
+}
+
+/// Segment client : tarifs préférentiels, exonération de TVA (B2B), accès réservé.
+model CustomerGroup {
+  id              String   @id @default(cuid())
+  code            String   @unique
+  name            String
+  description     String?
+  discountPercent Decimal? @db.Decimal(5, 2)
+  isTaxExempt     Boolean  @default(false)
+  isDefault       Boolean  @default(false)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  users      User[]
+  prices     Price[]
+  promotions PromotionCustomerGroup[]
+}
+
+enum ConsentType {
+  COOKIES_ANALYTICS
+  COOKIES_MARKETING
+  NEWSLETTER
+  TERMS
+}
+
+/// Preuve de consentement RGPD / cookies, horodatée.
+model ConsentLog {
+  id        String      @id @default(cuid())
+  userId    String?
+  user      User?       @relation(fields: [userId], references: [id], onDelete: SetNull)
+  sessionId String?
+  type      ConsentType
+  isGranted Boolean
+  version   String?
+  ip        String?
+  userAgent String?
+  createdAt DateTime    @default(now())
+
+  @@index([userId, type, createdAt])
+}
+
+enum DataRequestType {
+  EXPORT
+  DELETION
+}
+
+enum DataRequestStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  REJECTED
+}
+
+/// Demande RGPD d'export ou de suppression des données.
+model DataRequest {
+  id          String            @id @default(cuid())
+  userId      String
+  user        User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type        DataRequestType
+  status      DataRequestStatus @default(PENDING)
+  fileUrl     String?
+  processedAt DateTime?
+  note        String?
+  createdAt   DateTime          @default(now())
+
+  @@index([status, createdAt])
+}

@@ -1,0 +1,32 @@
+# Tout ce qui alourdit le contexte de build ou n'a rien à faire dans l'image.
+node_modules
+dist
+.git
+.github
+.env
+.env.*
+!.env.example
+
+# Réinstallés puis régénérés dans l'image : les inclure risquerait d'embarquer
+# des binaires compilés pour une autre plateforme que celle du conteneur.
+src/generated
+
+uploads
+storage
+coverage
+.next
+*.log
+npm-debug.log*
+
+# Documentation et outillage local
+README.md
+CLAUDE.md
+AGENTS.md
+.claude
+.agents
+.windsurf
+skills-lock.json
+docker-compose.yml
+docker-compose.prod.yml
+Dockerfile
+.dockerignore

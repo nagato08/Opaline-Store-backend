@@ -1,0 +1,108 @@
+# Déploiement de l'API sur le VPS.
+#
+# Postgres et Redis ne publient aucun port sur l'hôte : ils ne sont joignables
+# que depuis le réseau interne. Seul le proxy expose quelque chose à Internet.
+#
+#   docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build
+
+name: comptoir
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?requis}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?requis}
+      POSTGRES_DB: ${POSTGRES_DB:-comptoir}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      # Les sauvegardes sont écrites hors du volume de données : un volume
+      # corrompu ne doit pas emporter ses propres sauvegardes.
+      - ./backups:/backups
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB:-comptoir}']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks: [interne]
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    # Mot de passe obligatoire : Redis porte les sessions de limitation de débit
+    # et les plafonds d'affichage des campagnes.
+    command: ['redis-server', '--appendonly', 'yes', '--requirepass', '${REDIS_PASSWORD:?requis}']
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', '-a', '${REDIS_PASSWORD}', 'ping']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks: [interne]
+
+  # Tâche ponctuelle : applique les migrations puis s'arrête. L'API attend sa
+  # réussite avant de démarrer.
+  migrate:
+    build:
+      context: .
+      target: migrator
+    restart: 'no'
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?requis}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [interne]
+
+  api:
+    build:
+      context: .
+      target: runner
+    restart: unless-stopped
+    env_file: [.env.production]
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+    volumes:
+      # Exports RGPD : régénérables, mais leur perte en cours de traitement
+      # obligerait le client à refaire sa demande.
+      - exports_data:/app/storage/exports
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    networks: [interne, web]
+
+  # Caddy obtient et renouvelle les certificats TLS sans configuration.
+  proxy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - '80:80'
+      - '443:443'
+    volumes:
+      - ./docker/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    environment:
+      API_DOMAIN: ${API_DOMAIN:?requis}
+    depends_on: [api]
+    networks: [web]
+
+volumes:
+  postgres_data:
+  redis_data:
+  exports_data:
+  caddy_data:
+  caddy_config:
+
+networks:
+  # Base et cache restent hors d'atteinte du proxy et d'Internet.
+  interne:
+    internal: true
+  web:

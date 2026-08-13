@@ -1,0 +1,134 @@
+// ---------------------------------------------------------------------------
+// Engagement client : avis, listes d'envies, fidélité, parrainage
+// ---------------------------------------------------------------------------
+
+enum ReviewStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+model Review {
+  id          String     @id @default(cuid())
+  productId   String
+  product     Product    @relation(fields: [productId], references: [id], onDelete: Cascade)
+  userId      String?
+  user        User?      @relation(fields: [userId], references: [id], onDelete: SetNull)
+  /// Rattachement à une ligne de commande : atteste l'achat vérifié.
+  orderItemId String?
+  orderItem   OrderItem? @relation(fields: [orderItemId], references: [id], onDelete: SetNull)
+
+  authorName         String?
+  rating             Int
+  title              String?
+  body               String?
+  locale             Locale       @default(FR)
+  status             ReviewStatus @default(PENDING)
+  isVerifiedPurchase Boolean      @default(false)
+  helpfulCount       Int          @default(0)
+
+  reply     String?
+  repliedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  media ReviewMedia[]
+
+  @@unique([orderItemId, userId])
+  @@index([productId, status, createdAt])
+}
+
+model ReviewMedia {
+  id       String @id @default(cuid())
+  reviewId String
+  review   Review @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+  mediaId  String
+  media    Media  @relation(fields: [mediaId], references: [id], onDelete: Cascade)
+  position Int    @default(0)
+
+  @@unique([reviewId, mediaId])
+}
+
+model Wishlist {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name      String   @default("default")
+  /// Jeton de partage public de la liste.
+  token     String?  @unique
+  isPublic  Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  items WishlistItem[]
+
+  @@unique([userId, name])
+}
+
+model WishlistItem {
+  id         String   @id @default(cuid())
+  wishlistId String
+  wishlist   Wishlist @relation(fields: [wishlistId], references: [id], onDelete: Cascade)
+  productId  String
+  product    Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  variantId  String?
+  variant    Variant? @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  addedAt    DateTime @default(now())
+
+  @@unique([wishlistId, productId, variantId])
+}
+
+model LoyaltyAccount {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  points    Int      @default(0)
+  tier      String   @default("BASE")
+  updatedAt DateTime @updatedAt
+
+  transactions LoyaltyTransaction[]
+}
+
+enum LoyaltyTransactionType {
+  EARN
+  SPEND
+  EXPIRE
+  ADJUSTMENT
+  REFERRAL
+}
+
+model LoyaltyTransaction {
+  id        String                 @id @default(cuid())
+  accountId String
+  account   LoyaltyAccount         @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  orderId   String?
+  order     Order?                 @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  type      LoyaltyTransactionType
+  points    Int
+  reason    String?
+  expiresAt DateTime?
+  createdAt DateTime               @default(now())
+
+  @@index([accountId, createdAt])
+}
+
+enum ReferralStatus {
+  PENDING
+  QUALIFIED
+  REWARDED
+  CANCELLED
+}
+
+model Referral {
+  id         String         @id @default(cuid())
+  code       String         @unique
+  referrerId String
+  referrer   User           @relation("ReferralReferrer", fields: [referrerId], references: [id], onDelete: Cascade)
+  refereeId  String?        @unique
+  referee    User?          @relation("ReferralReferee", fields: [refereeId], references: [id], onDelete: SetNull)
+  status     ReferralStatus @default(PENDING)
+  rewardedAt DateTime?
+  createdAt  DateTime       @default(now())
+
+  @@index([referrerId, status])
+}

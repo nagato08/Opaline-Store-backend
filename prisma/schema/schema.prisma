@@ -1,0 +1,25 @@
+// Schéma Prisma — backend e-commerce (mono-boutique)
+// Découpé par domaine : voir les autres fichiers de ce dossier.
+//
+// Conventions :
+//  - Tous les montants sont des entiers en centimes (`...Cents`) + un code devise ISO 4217.
+//  - Les quantités sont en Decimal (vente au poids pour l'alimentaire).
+//  - Tout texte visible par le client est traduit via une table `*Translation` (locale FR/EN).
+//  - Les commandes figent (snapshot) prix, taxes, remises et libellés au moment de l'achat.
+
+generator client {
+  provider     = "prisma-client"
+  output       = "../../src/generated/prisma"
+  moduleFormat = "cjs"
+  runtime      = "nodejs"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+/// Langues exposées par la boutique. FR = langue par défaut.
+enum Locale {
+  FR
+  EN
+}

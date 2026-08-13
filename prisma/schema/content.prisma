@@ -1,0 +1,331 @@
+// ---------------------------------------------------------------------------
+// Contenu et marketing : pages, blog, menus, bannières, campagnes planifiées,
+// popups ciblés, newsletter, SEO
+// ---------------------------------------------------------------------------
+
+enum PublishStatus {
+  DRAFT
+  SCHEDULED
+  PUBLISHED
+  ARCHIVED
+}
+
+model Page {
+  id          String        @id @default(cuid())
+  code        String        @unique
+  template    String        @default("default")
+  status      PublishStatus @default(DRAFT)
+  publishedAt DateTime?
+  position    Int           @default(0)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  translations PageTranslation[]
+}
+
+model PageTranslation {
+  id             String  @id @default(cuid())
+  pageId         String
+  page           Page    @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  locale         Locale
+  title          String
+  slug           String
+  /// Contenu structuré en blocs (éditeur admin), pas du HTML brut.
+  content        Json?
+  excerpt        String?
+  coverId        String?
+  cover          Media?  @relation(fields: [coverId], references: [id], onDelete: SetNull)
+  seoTitle       String?
+  seoDescription String?
+
+  @@unique([pageId, locale])
+  @@unique([locale, slug])
+}
+
+model Post {
+  id          String        @id @default(cuid())
+  status      PublishStatus @default(DRAFT)
+  authorName  String?
+  publishedAt DateTime?
+  tags        String[]
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  translations PostTranslation[]
+
+  @@index([status, publishedAt])
+}
+
+model PostTranslation {
+  id             String  @id @default(cuid())
+  postId         String
+  post           Post    @relation(fields: [postId], references: [id], onDelete: Cascade)
+  locale         Locale
+  title          String
+  slug           String
+  excerpt        String?
+  content        Json?
+  coverId        String?
+  cover          Media?  @relation(fields: [coverId], references: [id], onDelete: SetNull)
+  seoTitle       String?
+  seoDescription String?
+
+  @@unique([postId, locale])
+  @@unique([locale, slug])
+}
+
+model Menu {
+  id        String   @id @default(cuid())
+  code      String   @unique
+  createdAt DateTime @default(now())
+
+  items MenuItem[]
+}
+
+model MenuItem {
+  id         String     @id @default(cuid())
+  menuId     String
+  menu       Menu       @relation(fields: [menuId], references: [id], onDelete: Cascade)
+  parentId   String?
+  parent     MenuItem?  @relation("MenuTree", fields: [parentId], references: [id], onDelete: Cascade)
+  children   MenuItem[] @relation("MenuTree")
+  position   Int        @default(0)
+  /// Cible : URL libre, ou référence vers une catégorie/collection/page.
+  url        String?
+  targetType String?
+  targetId   String?
+  isActive   Boolean    @default(true)
+
+  translations MenuItemTranslation[]
+
+  @@index([menuId, parentId, position])
+}
+
+model MenuItemTranslation {
+  id         String   @id @default(cuid())
+  menuItemId String
+  menuItem   MenuItem @relation(fields: [menuItemId], references: [id], onDelete: Cascade)
+  locale     Locale
+  label      String
+
+  @@unique([menuItemId, locale])
+}
+
+enum CampaignType {
+  BANNER
+  POPUP
+  TOP_BAR
+  INTERSTITIAL
+  IN_PAGE_NOTICE
+  COUNTDOWN
+}
+
+enum CampaignStatus {
+  DRAFT
+  SCHEDULED
+  RUNNING
+  PAUSED
+  FINISHED
+}
+
+/// Campagne d'affichage : c'est ce qui fait apparaître un message, un popup ou
+/// une bannière au bon moment, au bon endroit, pour le bon visiteur.
+///
+/// `targeting` — à qui : pages, catégories, appareil, pays, langue, nouveau
+///   visiteur ou client connu, segment, source UTM, contenu du panier.
+///   { "device": ["mobile"], "pages": ["/fr/meubles/*"], "audience": "NEW_VISITOR" }
+///
+/// `displayRules` — quand et comment : délai, pourcentage de scroll, intention
+///   de sortie, nombre max d'affichages par visiteur, refermable.
+///   { "trigger": "DELAY", "delayMs": 5000, "maxPerVisitor": 2, "dismissible": true }
+///
+/// `recurrence` — planification récurrente optionnelle (tous les vendredis 18h-23h).
+model Campaign {
+  id          String         @id @default(cuid())
+  code        String         @unique
+  type        CampaignType
+  status      CampaignStatus @default(DRAFT)
+  priority    Int            @default(0)
+  /// Empêche l'affichage simultané d'une autre campagne du même emplacement.
+  isExclusive Boolean        @default(false)
+
+  startsAt DateTime?
+  endsAt   DateTime?
+  /// Fuseau de référence de la planification (« 18h » en heure de Paris).
+  timezone String    @default("Europe/Paris")
+
+  recurrence   Json?
+  targeting    Json  @default("{}")
+  displayRules Json  @default("{}")
+
+  /// Promotion et collection éventuellement mises en avant par la campagne.
+  promotionId  String?
+  promotion    Promotion?  @relation(fields: [promotionId], references: [id], onDelete: SetNull)
+  collectionId String?
+  collection   Collection? @relation(fields: [collectionId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  translations CampaignTranslation[]
+  placements   CampaignPlacement[]
+  banners      Banner[]
+  stats        CampaignStat[]
+
+  @@index([status, startsAt, endsAt])
+  @@index([type, status])
+}
+
+model CampaignTranslation {
+  id         String   @id @default(cuid())
+  campaignId String
+  campaign   Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  locale     Locale
+  title      String?
+  body       String?
+  ctaLabel   String?
+  ctaUrl     String?
+
+  @@unique([campaignId, locale])
+}
+
+/// Emplacement nommé du front où la campagne peut s'afficher
+/// (`home_hero`, `header_top_bar`, `product_sidebar`, `cart_notice`...).
+model CampaignPlacement {
+  id         String   @id @default(cuid())
+  campaignId String
+  campaign   Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  slot       String
+  position   Int      @default(0)
+
+  @@unique([campaignId, slot])
+  @@index([slot])
+}
+
+/// Visuel publicitaire rattaché ou non à une campagne.
+model Banner {
+  id         String    @id @default(cuid())
+  code       String    @unique
+  campaignId String?
+  campaign   Campaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  slot       String
+  desktopId  String?
+  desktop    Media?    @relation("BannerDesktop", fields: [desktopId], references: [id], onDelete: SetNull)
+  mobileId   String?
+  mobile     Media?    @relation("BannerMobile", fields: [mobileId], references: [id], onDelete: SetNull)
+  linkUrl    String?
+  /// Poids de rotation quand plusieurs bannières partagent le même emplacement.
+  weight     Int       @default(1)
+  position   Int       @default(0)
+  isActive   Boolean   @default(true)
+  startsAt   DateTime?
+  endsAt     DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  translations BannerTranslation[]
+
+  @@index([slot, isActive])
+}
+
+model BannerTranslation {
+  id       String  @id @default(cuid())
+  bannerId String
+  banner   Banner  @relation(fields: [bannerId], references: [id], onDelete: Cascade)
+  locale   Locale
+  title    String?
+  subtitle String?
+  ctaLabel String?
+  alt      String?
+
+  @@unique([bannerId, locale])
+}
+
+/// Statistiques agrégées par jour : on n'enregistre pas chaque impression
+/// individuellement, ça ferait exploser la table pour rien.
+model CampaignStat {
+  id           String   @id @default(cuid())
+  campaignId   String
+  campaign     Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  date         DateTime @db.Date
+  impressions  Int      @default(0)
+  clicks       Int      @default(0)
+  dismissals   Int      @default(0)
+  conversions  Int      @default(0)
+  revenueCents Int      @default(0)
+
+  @@unique([campaignId, date])
+}
+
+enum SubscriberStatus {
+  PENDING
+  SUBSCRIBED
+  UNSUBSCRIBED
+  BOUNCED
+}
+
+model NewsletterSubscriber {
+  id             String           @id @default(cuid())
+  email          String           @unique
+  locale         Locale           @default(FR)
+  status         SubscriberStatus @default(PENDING)
+  source         String?
+  confirmedAt    DateTime?
+  unsubscribedAt DateTime?
+  tags           String[]
+  createdAt      DateTime         @default(now())
+
+  @@index([status])
+}
+
+/// Gabarit d'email, transactionnel ou marketing, une ligne par langue.
+model EmailTemplate {
+  id        String   @id @default(cuid())
+  code      String
+  locale    Locale
+  subject   String
+  html      String
+  text      String?
+  isActive  Boolean  @default(true)
+  updatedAt DateTime @updatedAt
+
+  @@unique([code, locale])
+}
+
+enum EmailStatus {
+  QUEUED
+  SENT
+  FAILED
+  BOUNCED
+  OPENED
+  CLICKED
+}
+
+/// Trace des envois, pour le support et la déliverabilité.
+model EmailLog {
+  id           String      @id @default(cuid())
+  to           String
+  templateCode String?
+  subject      String?
+  status       EmailStatus @default(QUEUED)
+  providerId   String?
+  error        String?
+  relatedType  String?
+  relatedId    String?
+  sentAt       DateTime?
+  createdAt    DateTime    @default(now())
+
+  @@index([to, createdAt])
+  @@index([relatedType, relatedId])
+}
+
+/// Redirections 301/302, pour ne pas perdre le référencement lors des refontes.
+model Redirect {
+  id         String   @id @default(cuid())
+  fromPath   String   @unique
+  toPath     String
+  statusCode Int      @default(301)
+  isActive   Boolean  @default(true)
+  hits       Int      @default(0)
+  createdAt  DateTime @default(now())
+}

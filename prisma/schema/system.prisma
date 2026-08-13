@@ -1,0 +1,101 @@
+// ---------------------------------------------------------------------------
+// Système : configuration, audit, idempotence, webhooks, notifications
+// ---------------------------------------------------------------------------
+
+/// Configuration de la boutique en clé/valeur (nom, coordonnées, TVA incluse ou non,
+/// devise et langue par défaut, seuils, réseaux sociaux...).
+model Setting {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  group     String   @default("general")
+  value     Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([group])
+}
+
+/// Permet de déployer un module inachevé sans l'exposer.
+model FeatureFlag {
+  key         String   @id
+  isEnabled   Boolean  @default(false)
+  description String?
+  updatedAt   DateTime @updatedAt
+}
+
+/// Journal d'audit : qui a changé quoi, côté admin.
+model AuditLog {
+  id         String   @id @default(cuid())
+  actorId    String?
+  actor      User?    @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  action     String
+  entityType String
+  entityId   String?
+  before     Json?
+  after      Json?
+  ip         String?
+  userAgent  String?
+  createdAt  DateTime @default(now())
+
+  @@index([entityType, entityId])
+  @@index([actorId, createdAt])
+  @@index([createdAt])
+}
+
+/// Idempotence des écritures sensibles (checkout, paiement, remboursement).
+/// Le client envoie un header `Idempotency-Key` ; la réponse est rejouée à l'identique.
+model IdempotencyKey {
+  id           String    @id @default(cuid())
+  key          String
+  scope        String
+  userId       String?
+  requestHash  String
+  statusCode   Int?
+  responseBody Json?
+  lockedAt     DateTime?
+  completedAt  DateTime?
+  expiresAt    DateTime
+  createdAt    DateTime  @default(now())
+
+  @@unique([scope, key])
+  @@index([expiresAt])
+}
+
+/// Événements entrants des prestataires (paiement, transporteur).
+/// `externalId` unique par provider = déduplication des webhooks rejoués.
+model WebhookEvent {
+  id          String    @id @default(cuid())
+  provider    String
+  externalId  String
+  type        String
+  payload     Json
+  attempts    Int       @default(0)
+  processedAt DateTime?
+  error       String?
+  createdAt   DateTime  @default(now())
+
+  @@unique([provider, externalId])
+  @@index([processedAt, createdAt])
+}
+
+enum NotificationChannel {
+  IN_APP
+  EMAIL
+  SMS
+}
+
+/// Notification destinée à un utilisateur (client ou admin).
+model Notification {
+  id        String              @id @default(cuid())
+  userId    String
+  user      User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  channel   NotificationChannel @default(IN_APP)
+  type      String
+  title     String
+  body      String?
+  data      Json?
+  readAt    DateTime?
+  createdAt DateTime            @default(now())
+
+  @@index([userId, readAt, createdAt])
+}

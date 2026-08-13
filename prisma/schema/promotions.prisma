@@ -1,0 +1,163 @@
+// ---------------------------------------------------------------------------
+// Promotions : moteur de règles, coupons, cartes cadeaux
+// ---------------------------------------------------------------------------
+
+enum PromotionScope {
+  ITEM
+  CART
+  SHIPPING
+}
+
+enum PromotionStatus {
+  DRAFT
+  SCHEDULED
+  ACTIVE
+  PAUSED
+  EXPIRED
+}
+
+/// Une promotion = conditions + actions + fenêtre temporelle + priorité.
+/// `conditions` et `actions` sont des arbres JSON validés à l'écriture et
+/// interprétés par le moteur de règles ; ça évite une table par type de promo.
+///
+/// Exemple de conditions :
+///   { "all": [ { "cartSubtotal": { "gte": 5000 } },
+///               { "category": { "in": ["cat_meubles"] } } ] }
+/// Exemple d'actions :
+///   [ { "type": "PERCENTAGE_OFF", "value": 15, "appliesTo": "MATCHED_ITEMS" } ]
+model Promotion {
+  id          String          @id @default(cuid())
+  code        String          @unique
+  name        String
+  description String?
+  scope       PromotionScope  @default(CART)
+  status      PromotionStatus @default(DRAFT)
+  conditions  Json            @default("{}")
+  actions     Json            @default("[]")
+
+  /// Priorité décroissante ; `isExclusive` bloque tout cumul avec une autre promo.
+  priority    Int     @default(0)
+  isExclusive Boolean @default(false)
+  isAutomatic Boolean @default(true)
+
+  startsAt DateTime?
+  endsAt   DateTime?
+
+  usageLimit       Int?
+  usageCount       Int     @default(0)
+  perCustomerLimit Int?
+  minimumCents     Int?
+  currencyCode     String? @db.Char(3)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  translations   PromotionTranslation[]
+  coupons        Coupon[]
+  redemptions    PromotionRedemption[]
+  customerGroups PromotionCustomerGroup[]
+  orderDiscounts OrderDiscount[]
+  campaigns      Campaign[]
+
+  @@index([status, startsAt, endsAt])
+}
+
+model PromotionTranslation {
+  id          String    @id @default(cuid())
+  promotionId String
+  promotion   Promotion @relation(fields: [promotionId], references: [id], onDelete: Cascade)
+  locale      Locale
+  label       String
+  description String?
+
+  @@unique([promotionId, locale])
+}
+
+/// Restriction d'une promotion à certains segments clients.
+model PromotionCustomerGroup {
+  promotionId String
+  promotion   Promotion     @relation(fields: [promotionId], references: [id], onDelete: Cascade)
+  groupId     String
+  group       CustomerGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  @@id([promotionId, groupId])
+}
+
+/// Code saisi par le client. Une promotion peut avoir un code unique ou des
+/// milliers de codes générés (campagne d'emailing, dédommagement).
+model Coupon {
+  id          String    @id @default(cuid())
+  code        String    @unique
+  promotionId String
+  promotion   Promotion @relation(fields: [promotionId], references: [id], onDelete: Cascade)
+  usageLimit  Int?
+  usageCount  Int       @default(0)
+  /// Code nominatif : utilisable par ce client uniquement.
+  assignedTo  String?
+  expiresAt   DateTime?
+  isActive    Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+
+  redemptions PromotionRedemption[]
+
+  @@index([promotionId, isActive])
+}
+
+model PromotionRedemption {
+  id          String    @id @default(cuid())
+  promotionId String
+  promotion   Promotion @relation(fields: [promotionId], references: [id], onDelete: Cascade)
+  couponId    String?
+  coupon      Coupon?   @relation(fields: [couponId], references: [id], onDelete: SetNull)
+  orderId     String
+  order       Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  userId      String?
+  user        User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
+  amountCents Int
+  createdAt   DateTime  @default(now())
+
+  @@index([promotionId, createdAt])
+  @@index([userId])
+}
+
+model GiftCard {
+  id             String    @id @default(cuid())
+  /// Code stocké haché ; les 4 derniers caractères en clair pour l'affichage.
+  codeHash       String    @unique
+  last4          String
+  initialCents   Int
+  balanceCents   Int
+  currencyCode   String    @db.Char(3)
+  currency       Currency  @relation(fields: [currencyCode], references: [code])
+  ownerId        String?
+  owner          User?     @relation(fields: [ownerId], references: [id], onDelete: SetNull)
+  recipientEmail String?
+  message        String?
+  expiresAt      DateTime?
+  isActive       Boolean   @default(true)
+  createdAt      DateTime  @default(now())
+
+  transactions GiftCardTransaction[]
+}
+
+enum GiftCardTransactionType {
+  ISSUE
+  REDEEM
+  REFUND
+  ADJUSTMENT
+  EXPIRE
+}
+
+model GiftCardTransaction {
+  id                String                  @id @default(cuid())
+  giftCardId        String
+  giftCard          GiftCard                @relation(fields: [giftCardId], references: [id], onDelete: Cascade)
+  orderId           String?
+  order             Order?                  @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  type              GiftCardTransactionType
+  amountCents       Int
+  balanceAfterCents Int
+  createdAt         DateTime                @default(now())
+
+  @@index([giftCardId, createdAt])
+}

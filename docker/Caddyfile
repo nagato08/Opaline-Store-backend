@@ -1,0 +1,24 @@
+# Proxy TLS de l'API.
+#
+# Caddy demande et renouvelle seul les certificats Let's Encrypt : il suffit
+# que le domaine pointe vers le VPS et que les ports 80 et 443 soient ouverts.
+
+{$API_DOMAIN} {
+	encode zstd gzip
+
+	# En-têtes de sécurité. `Strict-Transport-Security` n'est posé qu'ici, en
+	# production : l'activer en développement rendrait le HTTP local inaccessible
+	# pendant la durée du cache du navigateur.
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+
+	reverse_proxy api:3000 {
+		# L'API lit `request.ip` pour la limitation de débit : sans ces en-têtes,
+		# tous les visiteurs partageraient le compteur du proxy.
+		header_up X-Real-IP {remote_host}
+	}
+}

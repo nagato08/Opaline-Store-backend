@@ -1,0 +1,164 @@
+// ---------------------------------------------------------------------------
+// Stock : emplacements, quantités, lots/DLC, numéros de série, réservations
+// ---------------------------------------------------------------------------
+
+model Location {
+  id          String   @id @default(cuid())
+  code        String   @unique
+  name        String
+  line1       String?
+  postalCode  String?
+  city        String?
+  countryCode String?  @db.Char(2)
+  /// Emplacement retirable par le client (retrait en magasin).
+  isPickup    Boolean  @default(false)
+  isDefault   Boolean  @default(false)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  inventoryItems InventoryItem[]
+  stockLots      StockLot[]
+  movements      StockMovement[]
+  reservations   StockReservation[]
+  shipments      Shipment[]
+}
+
+enum BackorderPolicy {
+  DENY
+  ALLOW
+  PREORDER
+}
+
+model InventoryItem {
+  id         String   @id @default(cuid())
+  variantId  String
+  variant    Variant  @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  locationId String
+  location   Location @relation(fields: [locationId], references: [id], onDelete: Cascade)
+
+  /// Quantité physiquement présente.
+  onHand      Decimal @default(0) @db.Decimal(12, 3)
+  /// Quantité bloquée par des paniers/commandes non encore expédiés.
+  reserved    Decimal @default(0) @db.Decimal(12, 3)
+  incoming    Decimal @default(0) @db.Decimal(12, 3)
+  safetyStock Decimal @default(0) @db.Decimal(12, 3)
+  lowStockAt  Decimal @default(0) @db.Decimal(12, 3)
+
+  backorderPolicy BackorderPolicy @default(DENY)
+  isTracked       Boolean         @default(true)
+
+  updatedAt DateTime @updatedAt
+
+  @@unique([variantId, locationId])
+  @@index([locationId])
+}
+
+/// Lot de fabrication avec date limite : rotation FEFO et rappel produit ciblé.
+model StockLot {
+  id         String    @id @default(cuid())
+  variantId  String
+  variant    Variant   @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  locationId String
+  location   Location  @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  lotNumber  String
+  quantity   Decimal   @default(0) @db.Decimal(12, 3)
+  /// DLC (périssable) ou DDM (à consommer de préférence avant).
+  expiresAt  DateTime?
+  receivedAt DateTime  @default(now())
+  supplier   String?
+  isBlocked  Boolean   @default(false)
+
+  movements StockMovement[]
+
+  @@unique([variantId, locationId, lotNumber])
+  @@index([expiresAt])
+}
+
+enum SerialStatus {
+  IN_STOCK
+  RESERVED
+  SOLD
+  RETURNED
+  DEFECTIVE
+}
+
+model SerialNumber {
+  id             String       @id @default(cuid())
+  variantId      String
+  variant        Variant      @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  serial         String       @unique
+  status         SerialStatus @default(IN_STOCK)
+  orderItemId    String?
+  orderItem      OrderItem?   @relation(fields: [orderItemId], references: [id], onDelete: SetNull)
+  warrantyEndsAt DateTime?
+  createdAt      DateTime     @default(now())
+
+  @@index([variantId, status])
+}
+
+enum StockMovementType {
+  RECEIPT
+  SALE
+  RETURN
+  ADJUSTMENT
+  TRANSFER
+  LOSS
+  EXPIRY
+}
+
+/// Journal immuable des mouvements de stock : toute variation passe par ici.
+model StockMovement {
+  id         String            @id @default(cuid())
+  variantId  String
+  variant    Variant           @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  locationId String
+  location   Location          @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  lotId      String?
+  lot        StockLot?         @relation(fields: [lotId], references: [id], onDelete: SetNull)
+  type       StockMovementType
+  /// Signée : négative pour une sortie.
+  quantity   Decimal           @db.Decimal(12, 3)
+  reason     String?
+  reference  String?
+  actorId    String?
+  actor      User?             @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  createdAt  DateTime          @default(now())
+
+  @@index([variantId, createdAt])
+  @@index([reference])
+}
+
+/// Réservation temporaire pendant le tunnel de commande, purgée par un job à expiration.
+model StockReservation {
+  id         String    @id @default(cuid())
+  variantId  String
+  variant    Variant   @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  locationId String
+  location   Location  @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  cartId     String?
+  cart       Cart?     @relation(fields: [cartId], references: [id], onDelete: Cascade)
+  orderId    String?
+  order      Order?    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  quantity   Decimal   @db.Decimal(12, 3)
+  expiresAt  DateTime
+  releasedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([expiresAt, releasedAt])
+  @@index([variantId, locationId])
+}
+
+/// Alerte « prévenez-moi quand c'est de nouveau disponible ».
+model BackInStockRequest {
+  id         String    @id @default(cuid())
+  variantId  String
+  variant    Variant   @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  userId     String?
+  user       User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
+  email      String
+  locale     Locale    @default(FR)
+  notifiedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@unique([variantId, email])
+}
