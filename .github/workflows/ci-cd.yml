@@ -1,0 +1,121 @@
+name: CI/CD
+
+# `verify` tourne sur chaque push et chaque pull request : c'est le filet qui
+# doit attraper une erreur avant qu'elle parte en production, pas après.
+# `deploy` ne se déclenche qu'après son succès, et seulement sur `main` — une
+# branche de travail ne doit jamais pouvoir toucher le VPS.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# Un déploiement en cours n'est jamais interrompu par le suivant : ils
+# s'enchaînent, ils ne se chevauchent pas.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: '24'
+
+jobs:
+  verify:
+    name: Vérifier
+    runs-on: ubuntu-latest
+
+    # Base éphémère pour rejouer les migrations à blanc. C'est le même geste
+    # qu'une première installation sur le VPS : si une migration casse ici,
+    # elle aurait cassé là-bas.
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: comptoir
+          POSTGRES_PASSWORD: comptoir
+          POSTGRES_DB: comptoir
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U comptoir -d comptoir"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql://comptoir:comptoir@localhost:5432/comptoir?schema=public
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - run: npm ci
+
+      # Le client doit exister avant toute compilation : le code l'importe
+      # depuis `src/generated`.
+      - run: npx prisma generate
+
+      # Sans `--fix` : la CI vérifie, elle ne corrige pas silencieusement à la
+      # place de l'auteur du commit.
+      - name: Lint
+        run: npx eslint "{src,apps,libs,test}/**/*.ts"
+
+      # `nest build` type-check et compile en une passe — c'est exactement ce
+      # que fait l'image Docker, pas la peine de dupliquer un `tsc --noEmit`.
+      - name: Build
+        run: npm run build
+
+      # Applique toutes les migrations sur une base neuve : c'est le geste
+      # qu'un premier déploiement ferait, avant qu'il ne le fasse pour de vrai.
+      - name: Migrations à blanc
+        run: npx prisma migrate deploy
+
+  deploy:
+    name: Déployer sur le VPS
+    needs: verify
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      # `git pull` + reconstruction de l'image, exactement la procédure de
+      # mise à jour documentée dans DEPLOIEMENT.md — la CI ne fait qu'automatiser
+      # un geste manuel déjà éprouvé, elle n'en invente pas un nouveau.
+      - name: Mettre à jour et reconstruire
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_SSH_PORT || 22 }}
+          script_stop: true
+          script: |
+            cd ${{ secrets.VPS_DEPLOY_PATH }}
+            git fetch origin main
+            git reset --hard origin/main
+            docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build
+            docker image prune -f
+
+      # La sonde ne touche ni la base ni Redis (`/api/health/live`) : c'est
+      # elle que Docker utilise déjà, on vérifie ici depuis l'extérieur que
+      # Caddy route bien vers un conteneur qui a démarré.
+      - name: Vérifier que l'API répond
+        run: |
+          for i in $(seq 1 10); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' "https://${{ secrets.API_DOMAIN }}/api/health/live")
+            if [ "$code" = "200" ]; then
+              echo "API saine (${code})"
+              exit 0
+            fi
+            echo "Tentative $i : ${code:-échec}, nouvelle tentative dans 5 s"
+            sleep 5
+          done
+          echo "::error::L'API ne répond pas après déploiement"
+          exit 1
