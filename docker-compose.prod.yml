@@ -1,27 +1,37 @@
 # Déploiement de l'API sur le VPS.
 #
-# Postgres et Redis ne publient aucun port sur l'hôte : ils ne sont joignables
-# que depuis le réseau interne. Seul le proxy expose quelque chose à Internet.
+# Le VPS héberge plusieurs projets derrière un unique reverse proxy partagé
+# (nginx-proxy-manager, conteneur `npm`) : il occupe déjà les ports 80 et 443,
+# donc **aucun service ici n'en publie**. Le routage se fait par le réseau
+# Docker externe `web`, où NPM atteint `opaline-api` par son nom de conteneur
+# — exactement comme les autres projets du même VPS (`forge-web`, `tuto-api`).
+# Postgres et Redis restent sur le réseau interne, jamais sur `web`.
 #
-#   docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build
+# Les en-têtes de sécurité (HSTS, nosniff, etc.) ne sont donc pas portés par un
+# Caddy dédié : `helmet()` les pose déjà côté application (src/main.ts), ce qui
+# a l'avantage de rester vrai quel que soit le proxy placé devant.
+#
+#   docker compose -f docker-compose.prod.yml --env-file .env.production pull
+#   docker compose -f docker-compose.prod.yml --env-file .env.production up -d
 
-name: comptoir
+name: opaline
 
 services:
   postgres:
     image: postgres:17-alpine
+    container_name: opaline-postgres
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:?requis}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?requis}
-      POSTGRES_DB: ${POSTGRES_DB:-comptoir}
+      POSTGRES_DB: ${POSTGRES_DB:-opaline}
     volumes:
       - postgres_data:/var/lib/postgresql/data
       # Les sauvegardes sont écrites hors du volume de données : un volume
       # corrompu ne doit pas emporter ses propres sauvegardes.
       - ./backups:/backups
     healthcheck:
-      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB:-comptoir}']
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB:-opaline}']
       interval: 10s
       timeout: 5s
       retries: 5
@@ -29,6 +39,7 @@ services:
 
   redis:
     image: redis:7-alpine
+    container_name: opaline-redis
     restart: unless-stopped
     # Mot de passe obligatoire : Redis porte les sessions de limitation de débit
     # et les plafonds d'affichage des campagnes.
@@ -43,8 +54,10 @@ services:
     networks: [interne]
 
   # Tâche ponctuelle : applique les migrations puis s'arrête. L'API attend sa
-  # réussite avant de démarrer.
+  # réussite avant de démarrer. Image distincte du runtime — elle embarque le
+  # CLI Prisma, que l'image `api` n'a délibérément pas.
   migrate:
+    image: ${MIGRATOR_IMAGE:-ghcr.io/nagato08/opaline-api-migrator:latest}
     build:
       context: .
       target: migrator
@@ -57,9 +70,11 @@ services:
     networks: [interne]
 
   api:
+    image: ${API_IMAGE:-ghcr.io/nagato08/opaline-api:latest}
     build:
       context: .
       target: runner
+    container_name: opaline-api
     restart: unless-stopped
     env_file: [.env.production]
     environment:
@@ -76,33 +91,19 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
+    # `interne` pour joindre postgres/redis, `web` pour être atteint par NPM.
+    # Aucun port publié : NPM route par nom de conteneur sur `web`.
     networks: [interne, web]
-
-  # Caddy obtient et renouvelle les certificats TLS sans configuration.
-  proxy:
-    image: caddy:2-alpine
-    restart: unless-stopped
-    ports:
-      - '80:80'
-      - '443:443'
-    volumes:
-      - ./docker/Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data
-      - caddy_config:/config
-    environment:
-      API_DOMAIN: ${API_DOMAIN:?requis}
-    depends_on: [api]
-    networks: [web]
 
 volumes:
   postgres_data:
   redis_data:
   exports_data:
-  caddy_data:
-  caddy_config:
 
 networks:
   # Base et cache restent hors d'atteinte du proxy et d'Internet.
   interne:
     internal: true
+  # Créé une fois pour tout le VPS (voir DEPLOIEMENT.md) — pas par ce fichier.
   web:
+    external: true

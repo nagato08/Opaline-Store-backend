@@ -171,11 +171,19 @@ jobs        réservations expirées, paniers abandonnés
 
 ## Déploiement
 
-Quatre conteneurs : Postgres, Redis, l'API, Caddy en proxy TLS. Base et cache
-sur un réseau `internal`, sans port publié. Procédure complète dans
+Trois conteneurs : Postgres, Redis, l'API. Base et cache sur un réseau
+`internal`, sans port publié. Le VPS mutualise un reverse proxy unique pour
+plusieurs projets (nginx-proxy-manager, pas Caddy) : l'API rejoint son réseau
+`web` externe et s'y fait atteindre par nom de conteneur (`opaline-api`),
+sans publier de port elle non plus. Les en-têtes de sécurité sont donc posés
+par `helmet()` côté application, pas par le proxy. Procédure complète dans
 [DEPLOIEMENT.md](DEPLOIEMENT.md).
 
-Deux choix structurants :
+GitHub Actions ([.github/workflows/ci-cd.yml](.github/workflows/ci-cd.yml))
+construit l'image, la publie sur GHCR, puis se connecte en SSH au VPS pour la
+tirer et redémarrer — le VPS ne construit plus rien lui-même.
+
+Trois choix structurants :
 
 - **Les migrations tournent dans un conteneur dédié**, pas au démarrage de
   l'API. Sinon plusieurs réplicas migrent en même temps, et une migration
@@ -184,6 +192,9 @@ Deux choix structurants :
 - **La sonde de santé interroge `/api/health/live`**, qui ne touche ni la base
   ni Redis : une dépendance momentanément indisponible ne doit pas faire
   redémarrer l'API en boucle.
+- **L'image est construite une fois en CI, jamais sur le VPS** : la machine
+  héberge une quinzaine d'autres projets, et lui faire compiler à chaque push
+  serait lui voler de la mémoire qui ne lui appartient pas.
 
 ## Exploitation
 

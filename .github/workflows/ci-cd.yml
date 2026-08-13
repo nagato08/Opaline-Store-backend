@@ -2,8 +2,8 @@ name: CI/CD
 
 # `verify` tourne sur chaque push et chaque pull request : c'est le filet qui
 # doit attraper une erreur avant qu'elle parte en production, pas après.
-# `deploy` ne se déclenche qu'après son succès, et seulement sur `main` — une
-# branche de travail ne doit jamais pouvoir toucher le VPS.
+# `build` et `deploy` ne se déclenchent qu'après son succès, et seulement sur
+# `main` — une branche de travail ne doit jamais pouvoir toucher le VPS.
 on:
   push:
     branches: [main]
@@ -17,16 +17,18 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-permissions:
-  contents: read
-
 env:
   NODE_VERSION: '24'
+  REGISTRY: ghcr.io
+  API_IMAGE: ghcr.io/${{ github.repository_owner }}/opaline-api
+  MIGRATOR_IMAGE: ghcr.io/${{ github.repository_owner }}/opaline-api-migrator
 
 jobs:
   verify:
     name: Vérifier
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
 
     # Base éphémère pour rejouer les migrations à blanc. C'est le même geste
     # qu'une première installation sur le VPS : si une migration casse ici,
@@ -35,18 +37,18 @@ jobs:
       postgres:
         image: postgres:17-alpine
         env:
-          POSTGRES_USER: comptoir
-          POSTGRES_PASSWORD: comptoir
-          POSTGRES_DB: comptoir
+          POSTGRES_USER: opaline
+          POSTGRES_PASSWORD: opaline
+          POSTGRES_DB: opaline
         ports: ['5432:5432']
         options: >-
-          --health-cmd "pg_isready -U comptoir -d comptoir"
+          --health-cmd "pg_isready -U opaline -d opaline"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
 
     env:
-      DATABASE_URL: postgresql://comptoir:comptoir@localhost:5432/comptoir?schema=public
+      DATABASE_URL: postgresql://opaline:opaline@localhost:5432/opaline?schema=public
 
     steps:
       - uses: actions/checkout@v4
@@ -77,18 +79,66 @@ jobs:
       - name: Migrations à blanc
         run: npx prisma migrate deploy
 
-  deploy:
-    name: Déployer sur le VPS
+  # Construit les deux images (runtime et migrateur) et les pousse sur GHCR.
+  # Le VPS ne construit plus rien lui-même : il se contente de tirer une image
+  # déjà prête, ce qui laisse sa mémoire aux services qui tournent déjà dessus.
+  build:
+    name: Construire et publier les images
     needs: verify
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    environment: production
+    permissions:
+      contents: read
+      packages: write
 
     steps:
-      # `git pull` + reconstruction de l'image, exactement la procédure de
-      # mise à jour documentée dans DEPLOIEMENT.md — la CI ne fait qu'automatiser
-      # un geste manuel déjà éprouvé, elle n'en invente pas un nouveau.
-      - name: Mettre à jour et reconstruire
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Image runtime
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: runner
+          push: true
+          tags: |
+            ${{ env.API_IMAGE }}:latest
+            ${{ env.API_IMAGE }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Image migrateur
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: migrator
+          push: true
+          tags: |
+            ${{ env.MIGRATOR_IMAGE }}:latest
+            ${{ env.MIGRATOR_IMAGE }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    name: Déployer sur le VPS
+    needs: build
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+
+    steps:
+      # Le VPS tire les images tout juste publiées et redémarre les services
+      # concernés — aucune construction locale, aucun `git pull` nécessaire
+      # côté VPS pour ce qui touche l'image elle-même.
+      - name: Tirer les images et redémarrer
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.VPS_HOST }}
@@ -100,12 +150,13 @@ jobs:
             cd ${{ secrets.VPS_DEPLOY_PATH }}
             git fetch origin main
             git reset --hard origin/main
-            docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build
+            docker compose -f docker-compose.prod.yml --env-file .env.production pull
+            docker compose -f docker-compose.prod.yml --env-file .env.production up -d
             docker image prune -f
 
-      # La sonde ne touche ni la base ni Redis (`/api/health/live`) : c'est
-      # elle que Docker utilise déjà, on vérifie ici depuis l'extérieur que
-      # Caddy route bien vers un conteneur qui a démarré.
+      # nginx-proxy-manager route déjà `api.opaline.tadjo.dev` vers le
+      # conteneur `opaline-api` ; on vérifie ici depuis l'extérieur que le
+      # nouveau conteneur a bien démarré et répond.
       - name: Vérifier que l'API répond
         run: |
           for i in $(seq 1 10); do
