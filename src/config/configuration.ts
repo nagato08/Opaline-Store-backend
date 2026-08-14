@@ -52,6 +52,13 @@ export const configuration = () => ({
     ttl: parseInt(process.env.THROTTLE_TTL ?? '60', 10),
     limit: parseInt(process.env.THROTTLE_LIMIT ?? '120', 10),
   },
+
+  // Vides en production tant que non configurés : Swagger reste alors
+  // désactivé plutôt que de s'exposer sans protection par défaut.
+  swagger: {
+    user: process.env.SWAGGER_USER ?? '',
+    password: process.env.SWAGGER_PASSWORD ?? '',
+  },
 });
 
 export default configuration;

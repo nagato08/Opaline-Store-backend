@@ -105,6 +105,15 @@ class EnvironmentVariables {
   @Type(() => Number)
   @IsInt()
   THROTTLE_LIMIT = 120;
+
+  /** Absents = Swagger reste désactivé en production (voir main.ts). */
+  @IsOptional()
+  @IsString()
+  SWAGGER_USER?: string;
+
+  @IsOptional()
+  @IsString()
+  SWAGGER_PASSWORD?: string;
 }
 
 export function validateEnv(
