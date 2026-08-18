@@ -276,6 +276,38 @@ export class ProductsService {
     });
   }
 
+  /**
+   * Prix de base d'une variante, hors groupe client et hors palier de
+   * quantité — le seul que l'admin édite directement. Les tarifs par groupe
+   * ou par palier restent gérés ailleurs, ils ne se laissent pas écraser par
+   * un simple champ « Prix ».
+   */
+  async updateVariantPrice(
+    variantId: string,
+    amountCents: number,
+    currencyCode = 'EUR',
+  ) {
+    // Une clé composée avec `customerGroupId` nul n'est pas exploitable en
+    // `upsert` : NULL n'égale jamais NULL en SQL, Prisma refuse donc de la
+    // prendre comme clé de recherche. D'où la recherche puis l'écriture en
+    // deux temps.
+    const existing = await this.prisma.price.findFirst({
+      where: { variantId, currencyCode, customerGroupId: null, minQuantity: 1 },
+      select: { id: true },
+    });
+
+    if (existing) {
+      await this.prisma.price.update({
+        where: { id: existing.id },
+        data: { amountCents },
+      });
+    } else {
+      await this.prisma.price.create({
+        data: { variantId, currencyCode, amountCents, minQuantity: 1 },
+      });
+    }
+  }
+
   async listAdmin(query: AdminProductQueryDto) {
     const where: Prisma.ProductWhereInput = {
       deletedAt: null,
@@ -285,8 +317,22 @@ export class ProductsService {
       categories: query.categoryId
         ? { some: { categoryId: query.categoryId } }
         : undefined,
-      translations: query.search
-        ? { some: { name: { contains: query.search, mode: 'insensitive' } } }
+      // La référence (SKU) vit sur la variante, pas sur le produit : chercher
+      // « MOB-OSL » doit retrouver le produit par sa variante, pas seulement
+      // par son nom.
+      OR: query.search
+        ? [
+            {
+              translations: {
+                some: { name: { contains: query.search, mode: 'insensitive' } },
+              },
+            },
+            {
+              variants: {
+                some: { sku: { contains: query.search, mode: 'insensitive' } },
+              },
+            },
+          ]
         : undefined,
     };
 
@@ -299,6 +345,13 @@ export class ProductsService {
         include: {
           translations: true,
           brand: { select: { id: true, name: true } },
+          // Une seule catégorie ressort ici (la primaire) : la liste affiche
+          // un classement, pas l'arborescence complète que montre la fiche.
+          categories: {
+            where: { isPrimary: true },
+            take: 1,
+            include: { category: { include: { translations: true } } },
+          },
           media: {
             take: 1,
             orderBy: { position: 'asc' },
@@ -309,6 +362,8 @@ export class ProductsService {
               id: true,
               sku: true,
               isActive: true,
+              isSoldByMeasure: true,
+              measureUnit: true,
               prices: true,
               inventoryItems: { select: { onHand: true, reserved: true } },
             },

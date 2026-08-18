@@ -492,6 +492,15 @@ export class InventoryService {
     );
   }
 
+  /** Entrepôts actifs, le principal en tête — la plupart des boutiques n'en ont qu'un. */
+  listLocations() {
+    return this.prisma.location.findMany({
+      where: { isActive: true },
+      orderBy: { isDefault: 'desc' },
+      select: { id: true, code: true, name: true, isDefault: true },
+    });
+  }
+
   listMovements(variantId: string, take = 50) {
     return this.prisma.stockMovement.findMany({
       where: { variantId },
@@ -514,7 +523,12 @@ export class InventoryService {
       orderBy: { expiresAt: 'asc' },
       include: {
         variant: {
-          select: { sku: true, product: { select: { translations: true } } },
+          select: {
+            sku: true,
+            isSoldByMeasure: true,
+            measureUnit: true,
+            product: { select: { translations: true } },
+          },
         },
       },
     });

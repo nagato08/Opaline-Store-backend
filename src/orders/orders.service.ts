@@ -128,11 +128,21 @@ export class OrdersService {
 
   async listForAdmin(
     dto: PaginationDto,
-    filters: { status?: OrderStatus; search?: string; email?: string },
+    filters: {
+      status?: OrderStatus;
+      search?: string;
+      email?: string;
+      lotNumber?: string;
+    },
   ) {
     const where: Prisma.OrderWhereInput = {
       status: filters.status,
       email: filters.email,
+      // Un rappel produit se cible par lot : quelles commandes ont livré ce
+      // numéro-là, pas la base entière.
+      items: filters.lotNumber
+        ? { some: { lotNumbers: { has: filters.lotNumber } } }
+        : undefined,
       OR: filters.search
         ? [
             { number: { contains: filters.search, mode: 'insensitive' } },

@@ -98,6 +98,10 @@ class AdminOrderQueryDto extends PaginationDto {
   @IsOptional()
   @IsString()
   email?: string;
+
+  @IsOptional()
+  @IsString()
+  lotNumber?: string;
 }
 
 class TrackOrderDto {
@@ -209,6 +213,7 @@ export class AdminOrdersController {
       status: dto.status,
       search: dto.search,
       email: dto.email,
+      lotNumber: dto.lotNumber,
     });
   }
 

@@ -11,6 +11,8 @@ import {
   Put,
   Query,
 } from '@nestjs/common';
+import { IsInt, IsOptional, IsString, Min } from 'class-validator';
+import { Type } from 'class-transformer';
 import { ProductsService } from '../services/products.service';
 import { CategoriesService } from '../services/categories.service';
 import { TaxonomyService } from '../services/taxonomy.service';
@@ -20,6 +22,17 @@ import {
   CreateProductDto,
   UpdateProductDto,
 } from '../dto/product.dto';
+
+class UpdateVariantPriceDto {
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  amountCents: number;
+
+  @IsOptional()
+  @IsString()
+  currencyCode?: string;
+}
 import { CreateCategoryDto, UpdateCategoryDto } from '../dto/category.dto';
 import {
   CreateAttributeDto,
@@ -66,6 +79,20 @@ export class AdminCatalogController {
   @Put('products/:id/attributes')
   setAttributes(@Param('id') id: string, @Body() dto: SetProductAttributesDto) {
     return this.taxonomy.setProductAttributes(id, dto);
+  }
+
+  @Patch('products/:id/variants/:variantId/price')
+  async setVariantPrice(
+    @Param('id') id: string,
+    @Param('variantId') variantId: string,
+    @Body() dto: UpdateVariantPriceDto,
+  ) {
+    await this.products.updateVariantPrice(
+      variantId,
+      dto.amountCents,
+      dto.currencyCode,
+    );
+    return this.products.findOneAdmin(id);
   }
 
   @Delete('products/:id')

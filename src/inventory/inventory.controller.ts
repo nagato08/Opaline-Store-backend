@@ -69,6 +69,11 @@ export class InventoryController {
     return this.inventory.listStock(dto);
   }
 
+  @Get('locations')
+  locations() {
+    return this.inventory.listLocations();
+  }
+
   @Post('adjust')
   adjust(@Body() dto: AdjustStockDto, @CurrentUser() user: AuthenticatedUser) {
     return this.inventory.adjust({ ...dto, actorId: user.id });

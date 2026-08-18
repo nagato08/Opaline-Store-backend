@@ -187,10 +187,26 @@ export class CustomersService {
           number: true,
           status: true,
           paymentStatus: true,
+          fulfillmentStatus: true,
           totalCents: true,
           currencyCode: true,
           pricesIncludeTax: true,
           createdAt: true,
+          // Un acheteur invité n'a pas de carnet d'adresses : sa seule adresse
+          // connue est celle figée sur sa commande la plus récente.
+          addresses: {
+            where: { type: 'SHIPPING' },
+            take: 1,
+            select: {
+              firstName: true,
+              lastName: true,
+              line1: true,
+              line2: true,
+              postalCode: true,
+              city: true,
+              countryCode: true,
+            },
+          },
         },
       }),
     ]);
