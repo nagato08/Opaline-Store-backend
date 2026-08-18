@@ -1,6 +1,13 @@
 import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
 import { Type } from 'class-transformer';
-import { IsEnum, IsNumber, IsOptional, IsString } from 'class-validator';
+import {
+  IsEnum,
+  IsIn,
+  IsNumber,
+  IsOptional,
+  IsString,
+  MaxLength,
+} from 'class-validator';
 import { InventoryService } from './inventory.service';
 import { Roles } from '../common/decorators/roles.decorator';
 import {
@@ -37,10 +44,30 @@ class AdjustStockDto {
   expiresAt?: string;
 }
 
+class ListStockDto {
+  @IsOptional()
+  @IsIn(['out', 'low', 'ok'])
+  level?: 'out' | 'low' | 'ok';
+
+  @IsOptional()
+  @IsString()
+  locationId?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  search?: string;
+}
+
 @Controller('admin/inventory')
 @Roles('FULFILLMENT', 'MANAGER', 'ADMIN')
 export class InventoryController {
   constructor(private readonly inventory: InventoryService) {}
+
+  @Get()
+  list(@Query() dto: ListStockDto) {
+    return this.inventory.listStock(dto);
+  }
 
   @Post('adjust')
   adjust(@Body() dto: AdjustStockDto, @CurrentUser() user: AuthenticatedUser) {

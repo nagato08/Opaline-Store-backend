@@ -43,4 +43,22 @@ export class SettingsService {
   pricesIncludeTax(): Promise<boolean> {
     return this.get<boolean>('tax.pricesIncludeTax', true);
   }
+
+  /**
+   * Tous les réglages, pour l'écran d'administration.
+   *
+   * Lecture directe en base, sans passer par le cache : l'écran de
+   * configuration doit montrer l'état réel, pas une valeur mémorisée cinq
+   * minutes plus tôt — sinon une modification semble ne pas avoir été prise.
+   */
+  list(group?: string) {
+    return this.prisma.setting.findMany({
+      where: group ? { group } : undefined,
+      orderBy: [{ group: 'asc' }, { key: 'asc' }],
+    });
+  }
+
+  find(key: string) {
+    return this.prisma.setting.findUnique({ where: { key } });
+  }
 }

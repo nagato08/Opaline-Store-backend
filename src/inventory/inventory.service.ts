@@ -390,6 +390,108 @@ export class InventoryService {
     }
   }
 
+  /**
+   * État du stock, référence par référence.
+   *
+   * Le filtre porte sur le **disponible** (physique moins réservé) et non sur
+   * la quantité physique : un article entièrement réservé est en rupture pour
+   * qui veut l'acheter, même si le rayon n'est pas vide. Filtrer sur `onHand`
+   * laisserait passer exactement les ruptures qu'on cherche à voir.
+   *
+   * Le tri se fait en mémoire après lecture : `onHand - reserved` n'est pas
+   * une colonne, et Prisma ne sait pas trier sur une expression. La table
+   * compte une ligne par variante et par emplacement — quelques milliers au
+   * plus pour cette boutique, pas de quoi paginer côté base.
+   */
+  async listStock(options: {
+    level?: 'out' | 'low' | 'ok';
+    locationId?: string;
+    search?: string;
+  }) {
+    const items = await this.prisma.inventoryItem.findMany({
+      where: {
+        locationId: options.locationId,
+        variant: options.search
+          ? {
+              OR: [
+                { sku: { contains: options.search, mode: 'insensitive' } },
+                {
+                  product: {
+                    translations: {
+                      some: {
+                        name: { contains: options.search, mode: 'insensitive' },
+                      },
+                    },
+                  },
+                },
+              ],
+            }
+          : undefined,
+      },
+      include: {
+        location: { select: { id: true, code: true, name: true } },
+        variant: {
+          select: {
+            id: true,
+            sku: true,
+            measureUnit: true,
+            isSoldByMeasure: true,
+            product: {
+              select: {
+                id: true,
+                translations: { select: { locale: true, name: true } },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    const lots = await this.prisma.stockLot.groupBy({
+      by: ['variantId'],
+      where: { quantity: { gt: 0 } },
+      _count: { _all: true },
+    });
+    const lotCount = new Map(
+      lots.map((lot) => [lot.variantId, lot._count._all]),
+    );
+
+    const rows = items.map((item) => {
+      const onHand = item.onHand.toNumber();
+      const reserved = item.reserved.toNumber();
+      const threshold = item.lowStockAt.toNumber();
+      const available = onHand - reserved;
+
+      return {
+        variantId: item.variantId,
+        sku: item.variant.sku,
+        productId: item.variant.product.id,
+        name: item.variant.product.translations,
+        location: item.location,
+        onHand,
+        reserved,
+        available,
+        threshold,
+        unit: item.variant.isSoldByMeasure ? item.variant.measureUnit : null,
+        openLots: lotCount.get(item.variantId) ?? 0,
+        level: available <= 0 ? 'out' : available <= threshold ? 'low' : 'ok',
+      };
+    });
+
+    const filtered = options.level
+      ? rows.filter((row) => row.level === options.level)
+      : rows;
+
+    // Le plus urgent en tête : ce qu'on vient chercher sur cet écran, c'est
+    // ce qui manque, pas l'ordre alphabétique.
+    const order = { out: 0, low: 1, ok: 2 } as const;
+    return filtered.sort(
+      (a, b) =>
+        order[a.level as keyof typeof order] -
+          order[b.level as keyof typeof order] || a.available - b.available,
+    );
+  }
+
   listMovements(variantId: string, take = 50) {
     return this.prisma.stockMovement.findMany({
       where: { variantId },

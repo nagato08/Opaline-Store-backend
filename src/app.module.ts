@@ -25,6 +25,7 @@ import { CheckoutModule } from './checkout/checkout.module';
 import { OrdersModule } from './orders/orders.module';
 import { PaymentsModule } from './payments/payments.module';
 import { JobsModule } from './jobs/jobs.module';
+import { DashboardModule } from './dashboard/dashboard.module';
 import { PromotionsModule } from './promotions/promotions.module';
 import { ContentModule } from './content/content.module';
 import { MailModule } from './mail/mail.module';
@@ -136,6 +137,7 @@ import { PrismaExceptionFilter } from './common/filters/prisma-exception.filter'
     CartModule,
     OrdersModule,
     CheckoutModule,
+    DashboardModule,
     JobsModule,
   ],
   providers: [
