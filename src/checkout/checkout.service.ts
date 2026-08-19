@@ -300,6 +300,101 @@ export class CheckoutService {
     };
   }
 
+  /**
+   * Commande créée à la main — vente par téléphone ou au comptoir.
+   *
+   * Elle emprunte le même chemin qu'une commande en ligne une fois créée :
+   * un panier invité est constitué en coulisses (article, adresse, mode de
+   * livraison), puis {@link placeOrder} s'en saisit normalement. Même
+   * figeage du prix, même verrou de stock, même numérotation — seule
+   * l'origine de la saisie change. Le paiement est toujours `MANUAL` : le
+   * client n'a pas de prestataire de carte branché.
+   */
+  async createManualOrder(input: {
+    email: string;
+    firstName: string;
+    lastName: string;
+    line1: string;
+    postalCode: string;
+    city: string;
+    countryCode: string;
+    sku: string;
+    quantity: number;
+    customerNote?: string;
+  }) {
+    const variant = await this.prisma.variant.findFirst({
+      where: { sku: input.sku, isActive: true, deletedAt: null },
+      select: { id: true },
+    });
+
+    if (!variant) {
+      throw new BadRequestException(`Référence introuvable : ${input.sku}.`);
+    }
+
+    const countryCode = input.countryCode.toUpperCase();
+    const context: StorefrontContext = {
+      locale: 'FR',
+      currencyCode: countryCode === 'CA' ? 'CAD' : 'EUR',
+      countryCode,
+      customerGroupId: null,
+    };
+
+    const cart = await this.cart.getOrCreate(undefined, context);
+
+    await this.cart.addItem(
+      cart.id,
+      { variantId: variant.id, quantity: input.quantity },
+      context,
+    );
+
+    const address: AddressInputDto = {
+      firstName: input.firstName,
+      lastName: input.lastName,
+      line1: input.line1,
+      postalCode: input.postalCode,
+      city: input.city,
+      countryCode,
+    };
+
+    await this.cart.setContact(
+      cart.id,
+      {
+        email: input.email,
+        shippingAddress: address,
+        billingSameAsShipping: true,
+      },
+      context,
+    );
+
+    const quotes = await this.cart.shippingOptions(cart.id, context);
+
+    if (quotes.length === 0) {
+      throw new BadRequestException(
+        'Aucun mode de livraison disponible pour cette adresse.',
+      );
+    }
+
+    await this.cart.setShippingMethod(
+      cart.id,
+      { methodId: quotes[0].methodId },
+      context,
+    );
+
+    return this.placeOrder(
+      cart.token,
+      {
+        email: input.email,
+        shippingAddress: address,
+        billingSameAsShipping: true,
+        shippingMethodId: quotes[0].methodId,
+        paymentProvider: 'MANUAL',
+        acceptsTerms: true,
+        customerNote: input.customerNote,
+      },
+      context,
+    );
+  }
+
   /** Montant lisible dans la langue et la devise de la commande. */
   private formatMoney(cents: number, currency: string, locale: string): string {
     return new Intl.NumberFormat(locale === 'EN' ? 'en-GB' : 'fr-FR', {
