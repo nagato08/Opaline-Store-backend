@@ -176,6 +176,179 @@ export class DashboardService {
       quantity: row._sum.quantity?.toNumber() ?? 0,
     }));
   }
+
+  /**
+   * Répartitions pour l'écran « Statistiques ». Trois angles, chacun avec sa
+   * limite assumée plutôt que masquée :
+   *
+   * - **Par catégorie** : chiffre d'affaires des lignes de commande, groupé
+   *   par catégorie primaire du produit au moment de la lecture. Un produit
+   *   supprimé ou déplacé depuis retombe en « Sans catégorie ».
+   * - **Par pays** : ventilé par pays *et* devise, jamais sommé entre les
+   *   deux — même règle que le reste du tableau de bord.
+   * - **Par transporteur** : compte les expéditions déjà créées, pas les
+   *   commandes. Une commande non encore expédiée n'y figure donc pas.
+   */
+  async breakdowns(days: number) {
+    const now = new Date();
+    const since = new Date(now.getTime() - days * DAY_MS);
+    const sold: OrderStatus[] = [
+      'PENDING',
+      'CONFIRMED',
+      'PROCESSING',
+      'COMPLETED',
+    ];
+
+    const [byCategory, byCountry, byCarrier] = await Promise.all([
+      this.categoryBreakdown(since, now, sold),
+      this.countryBreakdown(since, now, sold),
+      this.carrierBreakdown(since, now),
+    ]);
+
+    return {
+      period: { days, since, until: now },
+      byCategory,
+      byCountry,
+      byCarrier,
+    };
+  }
+
+  private async categoryBreakdown(
+    since: Date,
+    until: Date,
+    statuses: OrderStatus[],
+  ) {
+    const items = await this.prisma.orderItem.findMany({
+      where: {
+        // Limité à l'euro : sommer des lignes EUR et CAD dans la même barre
+        // mélangerait deux devises, la règle qui gouverne tout ce fichier.
+        order: {
+          createdAt: { gte: since, lt: until },
+          status: { in: statuses },
+          currencyCode: 'EUR',
+        },
+      },
+      select: { productId: true, totalCents: true },
+    });
+
+    const productIds = [
+      ...new Set(
+        items
+          .map((item) => item.productId)
+          .filter((id): id is string => Boolean(id)),
+      ),
+    ];
+
+    const categories = await this.prisma.productCategory.findMany({
+      where: { productId: { in: productIds }, isPrimary: true },
+      select: {
+        productId: true,
+        category: {
+          select: {
+            translations: {
+              where: { locale: 'FR' },
+              select: { name: true },
+              take: 1,
+            },
+          },
+        },
+      },
+    });
+
+    const nameByProduct = new Map(
+      categories.map((row) => [
+        row.productId,
+        row.category.translations[0]?.name ?? 'Sans catégorie',
+      ]),
+    );
+
+    const totals = new Map<string, number>();
+    for (const item of items) {
+      const name = item.productId
+        ? (nameByProduct.get(item.productId) ?? 'Sans catégorie')
+        : 'Sans catégorie';
+      totals.set(name, (totals.get(name) ?? 0) + item.totalCents);
+    }
+
+    return [...totals.entries()]
+      .map(([name, totalCents]) => ({ name, totalCents }))
+      .sort((a, b) => b.totalCents - a.totalCents);
+  }
+
+  private async countryBreakdown(
+    since: Date,
+    until: Date,
+    statuses: OrderStatus[],
+  ) {
+    const orders = await this.prisma.order.findMany({
+      where: { createdAt: { gte: since, lt: until }, status: { in: statuses } },
+      select: {
+        totalCents: true,
+        currencyCode: true,
+        addresses: {
+          where: { type: 'SHIPPING' },
+          select: { countryCode: true },
+          take: 1,
+        },
+      },
+    });
+
+    const totals = new Map<
+      string,
+      {
+        countryCode: string;
+        currencyCode: string;
+        totalCents: number;
+        orderCount: number;
+      }
+    >();
+
+    for (const order of orders) {
+      const countryCode = order.addresses[0]?.countryCode ?? '—';
+      const key = `${countryCode}:${order.currencyCode}`;
+      const bucket = totals.get(key) ?? {
+        countryCode,
+        currencyCode: order.currencyCode,
+        totalCents: 0,
+        orderCount: 0,
+      };
+      bucket.totalCents += order.totalCents;
+      bucket.orderCount += 1;
+      totals.set(key, bucket);
+    }
+
+    return [...totals.values()].sort((a, b) => b.totalCents - a.totalCents);
+  }
+
+  /** Expéditions créées sur la période, groupées par transporteur. */
+  private async carrierBreakdown(since: Date, until: Date) {
+    const rows = await this.prisma.shipment.groupBy({
+      by: ['carrierId'],
+      where: { createdAt: { gte: since, lt: until } },
+      _count: { _all: true },
+    });
+
+    const carrierIds = rows
+      .map((row) => row.carrierId)
+      .filter((id): id is string => Boolean(id));
+
+    const carriers = await this.prisma.carrier.findMany({
+      where: { id: { in: carrierIds } },
+      select: { id: true, name: true },
+    });
+    const nameById = new Map(
+      carriers.map((carrier) => [carrier.id, carrier.name]),
+    );
+
+    return rows
+      .map((row) => ({
+        name: row.carrierId
+          ? (nameById.get(row.carrierId) ?? 'Transporteur inconnu')
+          : 'Sans transporteur',
+        orderCount: row._count._all,
+      }))
+      .sort((a, b) => b.orderCount - a.orderCount);
+  }
 }
 
 /** Variation relative. `null` quand la période précédente est vide. */

@@ -26,4 +26,9 @@ export class DashboardController {
   overview(@Query() dto: OverviewDto) {
     return this.dashboard.overview(dto.days);
   }
+
+  @Get('breakdowns')
+  breakdowns(@Query() dto: OverviewDto) {
+    return this.dashboard.breakdowns(dto.days);
+  }
 }
