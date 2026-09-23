@@ -18,6 +18,10 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
+  # Adresse publique sondée après déploiement. Ce n'est pas un secret — elle
+  # est imprimée sur chaque page du site — et la garder dans les secrets
+  # empêchait de lire sa valeur le jour où la sonde échouait.
+  API_URL_PUBLIC: https://api.opaline.tadjo.dev
   NODE_VERSION: '24'
   REGISTRY: ghcr.io
   API_IMAGE: ghcr.io/${{ github.repository_owner }}/opaline-api
@@ -162,20 +166,17 @@ jobs:
           # Un secret absent donne une adresse `https:///…` sur laquelle curl
           # échoue à chaque tentative : sans ce garde-fou, la cause se présente
           # comme une minute d'attente muette suivie d'un échec sans raison.
-          if [ -z "${{ secrets.API_DOMAIN }}" ]; then
-            echo "::error::Le secret API_DOMAIN est absent du dépôt : impossible de vérifier que l'api répond."
-            exit 1
-          fi
-
           # Le conteneur vient d'être recréé : sonder dans la seconde qui suit
           # ne teste que la vitesse de démarrage de Node.
           sleep 10
+
+          echo "Sonde : ${{ env.API_URL_PUBLIC }}/api/health/live"
 
           for i in $(seq 1 10); do
             # `|| true` : les `run:` tournent sous `bash -e`, et un curl en échec
             # — conteneur encore en train de démarrer — tuait le script dès la
             # première tentative au lieu de laisser la boucle faire son travail.
-            code=$(curl -s -o /dev/null -w '%{http_code}' "https://${{ secrets.API_DOMAIN }}/api/health/live" || true)
+            code=$(curl -s -o /dev/null -w '%{http_code}' "${{ env.API_URL_PUBLIC }}/api/health/live" || true)
             if [ "$code" = "200" ]; then
               echo "API saine (${code})"
               exit 0
