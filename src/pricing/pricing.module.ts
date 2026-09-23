@@ -2,6 +2,7 @@ import { Global, Module } from '@nestjs/common';
 import { PriceResolverService } from './price-resolver.service';
 import { TaxService } from './tax.service';
 import { SettingsService } from './settings.service';
+import { StorefrontSettingsController } from './storefront-settings.controller';
 import { AdminSettingsController } from './admin-settings.controller';
 
 /**
@@ -10,7 +11,7 @@ import { AdminSettingsController } from './admin-settings.controller';
  */
 @Global()
 @Module({
-  controllers: [AdminSettingsController],
+  controllers: [AdminSettingsController, StorefrontSettingsController],
   providers: [PriceResolverService, TaxService, SettingsService],
   exports: [PriceResolverService, TaxService, SettingsService],
 })

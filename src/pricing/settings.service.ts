@@ -61,4 +61,32 @@ export class SettingsService {
   find(key: string) {
     return this.prisma.setting.findUnique({ where: { key } });
   }
+
+  /**
+   * Réglages exposés à la boutique, sans authentification.
+   *
+   * La liste est **blanche et explicite**, jamais un filtre par groupe : le
+   * groupe `general` d'aujourd'hui peut accueillir demain une clé qui n'a rien
+   * à faire dans une page publique, et personne ne repenserait à cette route
+   * en l'ajoutant.
+   *
+   * Ce sont les valeurs dont un visiteur a besoin pour lire la boutique :
+   * l'enseigne, l'adresse de contact, les langues et la devise.
+   */
+  async publicSettings(): Promise<Record<string, unknown>> {
+    const keys = [
+      'store.name',
+      'store.email',
+      'store.locales',
+      'store.defaultLocale',
+      'store.currencies',
+      'store.defaultCurrency',
+    ];
+
+    const rows = await this.prisma.setting.findMany({
+      where: { key: { in: keys } },
+    });
+
+    return Object.fromEntries(rows.map((row) => [row.key, row.value]));
+  }
 }
