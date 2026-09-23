@@ -160,6 +160,22 @@ export class CategoriesService {
       }
     }
 
+    /* Le compte d'un rayon inclut ses sous-rayons. `_count.products` ne
+       rapporte que les produits rattachés directement : un rayon « Mobilier »
+       dont tous les articles vivent dans « Canapés » ou « Tables » affichait
+       « 0 article » alors qu'il en contenait quinze.
+
+       Le cumul se fait du bas vers le haut, en parcourant les catégories de la
+       plus profonde à la moins profonde — l'API les rend déjà triées par
+       profondeur croissante, il suffit donc de les remonter à l'envers. */
+    for (const category of [...categories].reverse()) {
+      if (!category.parentId) continue;
+
+      const node = nodes.get(category.id);
+      const parent = nodes.get(category.parentId);
+      if (node && parent) parent.productCount += node.productCount;
+    }
+
     return roots;
   }
 
