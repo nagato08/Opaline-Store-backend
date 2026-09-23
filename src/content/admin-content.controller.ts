@@ -117,6 +117,11 @@ export class AdminContentController {
     return this.content.createPost(dto);
   }
 
+  @Patch('posts/:id')
+  updatePost(@Param('id') id: string, @Body() dto: CreatePostDto) {
+    return this.content.updatePost(id, dto);
+  }
+
   @Delete('posts/:id')
   @HttpCode(HttpStatus.NO_CONTENT)
   removePost(@Param('id') id: string) {

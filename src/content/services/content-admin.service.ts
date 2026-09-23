@@ -113,6 +113,51 @@ export class ContentAdminService {
     return paginate(items, total, dto);
   }
 
+  /**
+   * Modification d'un article.
+   *
+   * Symétrique de `updatePage` : seuls les champs fournis bougent, et les
+   * traductions sont mises à jour une par une plutôt que remplacées en bloc —
+   * un envoi qui ne porte que le français ne doit pas effacer l'anglais.
+   *
+   * Le slug n'est régénéré qu'à la création d'une traduction absente : le
+   * changer sur une traduction existante casserait l'URL publique de
+   * l'article, déjà partagée et indexée.
+   */
+  async updatePost(id: string, dto: Partial<CreatePostDto>) {
+    await this.prisma.post.update({
+      where: { id },
+      data: {
+        status: dto.status,
+        authorName: dto.authorName,
+        tags: dto.tags,
+        publishedAt: dto.publishedAt
+          ? new Date(dto.publishedAt)
+          : dto.status === 'PUBLISHED'
+            ? new Date()
+            : undefined,
+      },
+    });
+
+    for (const translation of dto.translations ?? []) {
+      await this.prisma.postTranslation.upsert({
+        where: { postId_locale: { postId: id, locale: translation.locale } },
+        update: this.contentTranslationData(translation),
+        create: {
+          postId: id,
+          locale: translation.locale,
+          slug: await this.uniquePostSlug(translation, id),
+          ...this.contentTranslationData(translation),
+        },
+      });
+    }
+
+    return this.prisma.post.findUniqueOrThrow({
+      where: { id },
+      include: { translations: true },
+    });
+  }
+
   async removePost(id: string): Promise<void> {
     await this.prisma.post.delete({ where: { id } });
   }
@@ -369,6 +414,17 @@ export class ContentAdminService {
       ? slugify(translation.slug)
       : uniqueSlug(translation.title, (candidate) =>
           this.isSlugTaken('page', translation.locale, candidate, pageId),
+        );
+  }
+
+  private async uniquePostSlug(
+    translation: ContentTranslationDto,
+    postId: string,
+  ) {
+    return translation.slug
+      ? slugify(translation.slug)
+      : uniqueSlug(translation.title, (candidate) =>
+          this.isSlugTaken('post', translation.locale, candidate, postId),
         );
   }
 
