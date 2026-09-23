@@ -159,8 +159,15 @@ jobs:
       # nouveau conteneur a bien démarré et répond.
       - name: Vérifier que l'API répond
         run: |
+          # Le conteneur vient d'être recréé : sonder dans la seconde qui suit
+          # ne teste que la vitesse de démarrage de Node.
+          sleep 10
+
           for i in $(seq 1 10); do
-            code=$(curl -s -o /dev/null -w '%{http_code}' "https://${{ secrets.API_DOMAIN }}/api/health/live")
+            # `|| true` : les `run:` tournent sous `bash -e`, et un curl en échec
+            # — conteneur encore en train de démarrer — tuait le script dès la
+            # première tentative au lieu de laisser la boucle faire son travail.
+            code=$(curl -s -o /dev/null -w '%{http_code}' "https://${{ secrets.API_DOMAIN }}/api/health/live" || true)
             if [ "$code" = "200" ]; then
               echo "API saine (${code})"
               exit 0
