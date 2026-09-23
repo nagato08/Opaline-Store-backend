@@ -9,6 +9,7 @@ import {
   Req,
   Res,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import type { Request, Response } from 'express';
 import { CartService } from './cart.service';
 import { OptionalAuth } from '../common/decorators/public.decorator';
@@ -37,7 +38,10 @@ export const CART_COOKIE = 'cart_token';
 @Controller('cart')
 @OptionalAuth()
 export class CartController {
-  constructor(private readonly cart: CartService) {}
+  constructor(
+    private readonly cart: CartService,
+    private readonly config: ConfigService,
+  ) {}
 
   @Get()
   async get(
@@ -208,11 +212,28 @@ export class CartController {
     );
   }
 
+  /**
+   * Pose le jeton de panier.
+   *
+   * `domain` est **indispensable** : sans lui le cookie est host-only, donc
+   * jamais renvoyé à la boutique. Le rendu serveur de celle-ci repartait alors
+   * sans jeton et l'API créait un panier à chaque page affichée — plusieurs
+   * dizaines de lignes pour un seul visiteur, et un compteur d'articles figé à
+   * zéro dans l'en-tête.
+   *
+   * En développement, `cookieDomain` est absent : sur `localhost`, un domaine
+   * explicite est refusé par les navigateurs.
+   */
   private setToken(response: Response, token: string): void {
+    const isProduction = this.config.get<string>('env') === 'production';
+    const domain = this.config.get<string>('cookieDomain');
+
     response.cookie(CART_COOKIE, token, {
       httpOnly: true,
+      secure: isProduction,
       sameSite: 'lax',
       path: '/',
+      ...(domain ? { domain } : {}),
       maxAge: 30 * 86_400_000,
     });
     // Exposé aussi en en-tête pour les clients qui ne gèrent pas les cookies.

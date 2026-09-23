@@ -126,14 +126,26 @@ export class TokensService {
     });
   }
 
-  /** Pose les cookies httpOnly ; le front n'a jamais à manipuler les jetons. */
+  /**
+   * Pose les cookies httpOnly ; le front n'a jamais à manipuler les jetons.
+   *
+   * `domain` est indispensable dès que l'API et la boutique vivent sur deux
+   * sous-domaines. Sans lui, le cookie est *host-only* : le navigateur ne le
+   * renvoie qu'à `api.…`. Le client se connectait donc bien, mais le rendu
+   * serveur de la boutique ne voyait aucune session et le renvoyait vers
+   * l'écran de connexion à chaque page.
+   *
+   * Absent en développement, où `localhost` refuse un domaine explicite.
+   */
   setCookies(response: Response, tokens: TokenPair): void {
     const isProduction = this.config.get<string>('env') === 'production';
+    const domain = this.config.get<string>('cookieDomain');
     const base = {
       httpOnly: true,
       secure: isProduction,
       sameSite: 'lax' as const,
       path: '/',
+      ...(domain ? { domain } : {}),
     };
 
     response.cookie(ACCESS_COOKIE, tokens.accessToken, {
@@ -150,9 +162,20 @@ export class TokensService {
     });
   }
 
+  /**
+   * Efface les cookies de session.
+   *
+   * Le `domain` doit être **identique** à celui de la pose : un navigateur ne
+   * supprime que le cookie dont le couple domaine + chemin correspond, et une
+   * déconnexion qui laisse le jeton en place est pire qu'une absence de
+   * déconnexion.
+   */
   clearCookies(response: Response): void {
-    response.clearCookie(ACCESS_COOKIE, { path: '/' });
-    response.clearCookie(REFRESH_COOKIE, { path: '/api/auth' });
+    const domain = this.config.get<string>('cookieDomain');
+    const scope = domain ? { domain } : {};
+
+    response.clearCookie(ACCESS_COOKIE, { ...scope, path: '/' });
+    response.clearCookie(REFRESH_COOKIE, { ...scope, path: '/api/auth' });
   }
 
   hash(value: string): string {

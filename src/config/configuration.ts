@@ -7,6 +7,24 @@ export const configuration = () => ({
   storefrontUrl: process.env.STOREFRONT_URL as string,
   adminUrl: process.env.ADMIN_URL as string,
 
+  /**
+   * Domaine des cookies partagés entre l'API et la boutique.
+   *
+   * Sans lui, un cookie posé par l'API est *host-only* : le navigateur ne
+   * l'envoie qu'à `api.…`, jamais à la boutique. Le rendu serveur de la
+   * boutique repart donc sans jeton de panier et l'API en crée un neuf à
+   * chaque page affichée.
+   *
+   * La valeur attendue est le domaine **commun aux deux hôtes**, et le plus
+   * étroit possible : `opaline.tadjo.dev` couvre `opaline.tadjo.dev` et son
+   * sous-domaine `api.opaline.tadjo.dev`, sans exposer le cookie aux autres
+   * projets hébergés sur `tadjo.dev`.
+   *
+   * Vide en développement : sur `localhost`, un domaine explicite est refusé
+   * par les navigateurs.
+   */
+  cookieDomain: process.env.COOKIE_DOMAIN || undefined,
+
   database: {
     url: process.env.DATABASE_URL as string,
   },
