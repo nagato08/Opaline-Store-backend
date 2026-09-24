@@ -3,12 +3,31 @@ import { PrismaService } from '../prisma/prisma.service';
 import type { Locale } from '../generated/prisma/enums';
 
 export type ShippableLine = {
+  /** Identifie la ligne de panier, pour dire au client ce qui part avec quoi. */
+  cartItemId: string;
   variantId: string;
   quantity: number;
   weightGrams: number;
   isOversized: boolean;
   requiresColdChain: boolean;
   lineTotalCents: number;
+};
+
+/** Ce qui empêche un groupe de partir avec les autres. */
+export type ShippingConstraint = 'COLD_CHAIN' | 'OVERSIZED' | 'STANDARD';
+
+export type ShippingGroup = {
+  constraint: ShippingConstraint;
+  cartItemIds: string[];
+  options: ShippingQuote[];
+};
+
+export type ShippingPlan = {
+  /** Vrai quand le panier n'est livrable qu'en plusieurs expéditions. */
+  splitRequired: boolean;
+  /** Modes couvrant tout le panier en une fois ; vide s'il faut scinder. */
+  combined: ShippingQuote[];
+  groups: ShippingGroup[];
 };
 
 export type ShippingQuote = {
@@ -28,6 +47,84 @@ export type ShippingQuote = {
 @Injectable()
 export class ShippingService {
   constructor(private readonly prisma: PrismaService) {}
+
+  /**
+   * Plan de livraison du panier.
+   *
+   * Répond à une question que `quote` ne sait pas poser : *pourquoi* aucun mode
+   * n'est disponible. Un panier mêlant un meuble hors gabarit et une denrée
+   * réfrigérée ne trouve aucun transporteur — les deux contraintes sont
+   * cumulées en ET et aucun transporteur ne porte les deux. Le client se
+   * retrouvait alors bloqué au tunnel devant une liste vide, sans explication.
+   *
+   * On tente d'abord l'envoi groupé, qui reste le cas courant. S'il échoue et
+   * que le panier porte plusieurs contraintes, chaque groupe est chiffré
+   * séparément : la commande est livrable, mais en plusieurs fois.
+   */
+  async plan(
+    destination: { countryCode: string; region?: string | null },
+    lines: ShippableLine[],
+    currencyCode: string,
+    locale: Locale,
+  ): Promise<ShippingPlan> {
+    const combined = await this.quote(destination, lines, currencyCode, locale);
+
+    if (combined.length > 0 || lines.length === 0) {
+      return { splitRequired: false, combined, groups: [] };
+    }
+
+    /* Trois familles physiques, dans cet ordre : le froid prime sur le gabarit
+       — un colis réfrigéré encombrant part en camion frigorifique, pas chez un
+       transporteur de meubles. */
+    const buckets: Array<{
+      constraint: ShippingConstraint;
+      lines: ShippableLine[];
+    }> = [
+      {
+        constraint: 'COLD_CHAIN' as const,
+        lines: lines.filter((line) => line.requiresColdChain),
+      },
+      {
+        constraint: 'OVERSIZED' as const,
+        lines: lines.filter(
+          (line) => line.isOversized && !line.requiresColdChain,
+        ),
+      },
+      {
+        constraint: 'STANDARD' as const,
+        lines: lines.filter(
+          (line) => !line.isOversized && !line.requiresColdChain,
+        ),
+      },
+    ].filter((bucket) => bucket.lines.length > 0);
+
+    // Une seule famille : le panier est simplement non livrable ici, pas à scinder.
+    if (buckets.length < 2) {
+      return { splitRequired: false, combined: [], groups: [] };
+    }
+
+    const groups: ShippingGroup[] = [];
+
+    for (const bucket of buckets) {
+      groups.push({
+        constraint: bucket.constraint,
+        cartItemIds: bucket.lines.map((line) => line.cartItemId),
+        options: await this.quote(
+          destination,
+          bucket.lines,
+          currencyCode,
+          locale,
+        ),
+      });
+    }
+
+    /* Scinder n'a de sens que si chaque groupe trouve preneur. Si l'un reste
+       vide, la commande est impossible quoi qu'on fasse, et le promettre
+       serait pire que de l'avouer. */
+    const splitRequired = groups.every((group) => group.options.length > 0);
+
+    return { splitRequired, combined: [], groups };
+  }
 
   /**
    * Méthodes disponibles pour une destination et un contenu de panier.

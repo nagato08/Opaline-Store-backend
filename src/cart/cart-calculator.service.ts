@@ -424,6 +424,7 @@ export class CartCalculatorService {
     const shippable: ShippableLine[] = lines
       .filter((line) => line.requiresShipping)
       .map((line) => ({
+        cartItemId: line.cartItemId,
         variantId: line.variantId,
         quantity: line.quantity,
         weightGrams: line.weightGrams,

@@ -363,6 +363,40 @@ export class CartService {
       totals.lines
         .filter((line) => line.requiresShipping)
         .map((line) => ({
+          cartItemId: line.cartItemId,
+          variantId: line.variantId,
+          quantity: line.quantity,
+          weightGrams: line.weightGrams,
+          isOversized: line.isOversized,
+          requiresColdChain: line.requiresColdChain,
+          lineTotalCents: line.lineTotalCents,
+        })),
+      cart.currencyCode,
+      cart.locale,
+    );
+  }
+
+  /**
+   * Plan de livraison : modes groupés, ou groupes à expédier séparément.
+   *
+   * Distinct de `shippingOptions`, qui reste la liste plate attendue par le
+   * tunnel. Celui-ci répond en plus à « pourquoi rien n'est proposé ».
+   */
+  async shippingPlan(cartId: string, context: StorefrontContext) {
+    const cart = await this.prisma.cart.findUniqueOrThrow({
+      where: { id: cartId },
+      include: this.cartInclude,
+    });
+
+    const destination = this.destinationOf(cart);
+    const totals = await this.calculator.calculate(cart, context, destination);
+
+    return this.shipping.plan(
+      destination,
+      totals.lines
+        .filter((line) => line.requiresShipping)
+        .map((line) => ({
+          cartItemId: line.cartItemId,
           variantId: line.variantId,
           quantity: line.quantity,
           weightGrams: line.weightGrams,

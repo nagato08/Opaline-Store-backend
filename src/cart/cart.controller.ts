@@ -150,6 +150,27 @@ export class CartController {
     return this.cart.shippingOptions(cart.id, context);
   }
 
+  /**
+   * Plan de livraison du panier.
+   *
+   * Route distincte de `shipping-options` plutôt qu'un changement de sa forme :
+   * le tunnel existant continue de recevoir sa liste plate, et seul l'écran qui
+   * sait gérer les envois multiples appelle celle-ci.
+   */
+  @Get('shipping-plan')
+  async shippingPlan(
+    @Req() request: Request,
+    @Storefront() context: StorefrontContext,
+    @CurrentUser() user?: AuthenticatedUser,
+  ) {
+    const cart = await this.cart.getOrCreate(
+      this.token(request),
+      context,
+      user?.id,
+    );
+    return this.cart.shippingPlan(cart.id, context);
+  }
+
   @Patch('shipping-method')
   async setShippingMethod(
     @Body() dto: SetShippingMethodDto,
