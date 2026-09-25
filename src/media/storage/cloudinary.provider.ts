@@ -6,6 +6,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { v2 as cloudinary, type UploadApiResponse } from 'cloudinary';
 import {
+  VARIANT_HEIGHTS,
   VARIANT_WIDTHS,
   type ImageVariant,
   type StorageProvider,
@@ -104,9 +105,25 @@ export class CloudinaryStorageProvider implements StorageProvider {
       return originalUrl;
     }
 
+    const width = VARIANT_WIDTHS[variant];
+    const height = VARIANT_HEIGHTS[variant];
+
+    /* Les vignettes sortent au format exact de leur emplacement, complétées
+       par la couleur des bords plutôt que rognées.
+       Le catalogue mêle des photos de proportions très différentes ; forcer
+       un canapé photographié en paysage dans un cadre vertical lui coupait
+       les deux accoudoirs, et la grille montrait un morceau de velours vert
+       sans dire de quel meuble il s'agissait. `b_auto` prolonge le fond, ce
+       qui passe inaperçu sur les fonds unis de ce catalogue.
+
+       `zoom` et `placeholder` gardent `c_limit` : la première sert la photo
+       telle qu'elle est, la seconde n'est qu'une tache floue. */
+    const fit =
+      height === null ? ['c_limit'] : [`h_${height}`, 'c_pad', 'b_auto'];
+
     const transformation = [
-      `w_${VARIANT_WIDTHS[variant]}`,
-      'c_limit',
+      `w_${width}`,
+      ...fit,
       'f_auto',
       variant === 'placeholder' ? 'q_auto:low,e_blur:400' : 'q_auto',
     ].join(',');

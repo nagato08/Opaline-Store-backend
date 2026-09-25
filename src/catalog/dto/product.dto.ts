@@ -1,4 +1,4 @@
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
   IsArray,
   IsBoolean,
@@ -351,7 +351,14 @@ export class ProductQueryDto extends StorefrontQueryDto {
   @IsString()
   collectionSlug?: string;
 
+  /* Même normalisation que `SearchQueryDto` : un filtre à valeur unique
+     arrive sous forme de chaîne (`?brandIds=x`) et non de tableau, et sans
+     elle le cas le plus courant — une seule marque cochée — était rejeté par
+     un 400 « brandIds must be an array ». */
   @IsOptional()
+  @Transform(({ value }: { value: unknown }) =>
+    value === undefined || Array.isArray(value) ? value : [value],
+  )
   @IsArray()
   @IsString({ each: true })
   @Type(() => String)

@@ -26,6 +26,21 @@ export const VARIANT_WIDTHS: Record<ImageVariant, number> = {
   zoom: 1600,
 };
 
+/**
+ * Hauteur imposée, quand l'emplacement d'affichage en a une.
+ *
+ * `card` sort au format 4/5 de la grille et `thumbnail` au carré de la
+ * galerie, tous deux complétés sur les côtés plutôt que rognés. `zoom` sert
+ * la photo dans ses proportions d'origine, et `placeholder` n'est qu'une
+ * tache floue : ni l'un ni l'autre n'a de hauteur à respecter.
+ */
+export const VARIANT_HEIGHTS: Record<ImageVariant, number | null> = {
+  placeholder: null,
+  thumbnail: 160,
+  card: 750,
+  zoom: null,
+};
+
 export interface StorageProvider {
   readonly name: string;
   /** Vrai si l'hébergeur redimensionne lui-même : inutile alors de le faire ici. */

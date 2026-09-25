@@ -97,7 +97,11 @@ export class SearchService {
 
     const [hits, facets] = await Promise.all([
       this.hydrate(orderedIds, scores, pinnedIds, context),
-      this.buildFacets(context.locale, query),
+      this.buildFacets(
+        context.locale,
+        query,
+        term ? await this.termProductIds(expanded, context.locale) : undefined,
+      ),
     ]);
 
     if (term) {
@@ -473,18 +477,52 @@ export class SearchService {
   }
 
   /**
-   * Facettes calculées sur l'ensemble filtré. Elles ne tiennent pas compte du
-   * terme recherché : un compteur qui tombe à zéro dès la première sélection
-   * empêche le visiteur d'élargir sa recherche.
+   * Tous les produits répondant au terme, sans pagination.
+   *
+   * Sert au décompte des facettes, qui porte sur la recherche entière et non
+   * sur la page affichée. Plafonné : au-delà, la liste d'identifiants coûterait
+   * plus que la précision qu'elle apporte, et les compteurs ne sont de toute
+   * façon qu'un ordre de grandeur à cette échelle.
+   */
+  private async termProductIds(
+    expandedTerm: string,
+    locale: Locale,
+  ): Promise<string[]> {
+    const rows = await this.prisma.$queryRaw<{ productId: string }[]>`
+      SELECT t."productId"
+      FROM "ProductTranslation" t
+      JOIN "Product" p ON p."id" = t."productId"
+      WHERE t."locale" = ${locale}::"Locale"
+        AND p."status" = 'ACTIVE' AND p."deletedAt" IS NULL
+        AND t."searchVector" @@ websearch_to_tsquery('fr_unaccent', ${expandedTerm})
+      LIMIT 1000
+    `;
+
+    return rows.map((row) => row.productId);
+  }
+
+  /**
+   * Facettes calculées sur l'ensemble filtré.
+   *
+   * Elles ne tiennent pas compte des **filtres** retenus : un compteur qui
+   * tombe à zéro dès la première sélection empêche le visiteur d'élargir sa
+   * recherche.
+   *
+   * Elles tiennent compte du **terme**, en revanche. Un terme n'est pas une
+   * facette qu'on desserre d'un clic, et l'ignorer donnait des écrans qui se
+   * contredisaient : « 1 résultat pour “table” » au-dessus d'une colonne
+   * annonçant Informatique 4 et Son et image 3, comptés sur tout le catalogue.
    */
   private async buildFacets(
     locale: Locale,
     query: SearchQueryDto,
+    matchingIds?: string[],
   ): Promise<SearchFacets> {
     const baseWhere = {
       status: 'ACTIVE' as const,
       deletedAt: null,
       brandId: query.brandIds?.length ? { in: query.brandIds } : undefined,
+      id: matchingIds ? { in: matchingIds } : undefined,
     };
 
     const [categories, brands, attributes, priceBounds, stock] =
