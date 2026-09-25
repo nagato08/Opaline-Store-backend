@@ -55,7 +55,17 @@ export class OrdersService {
       payments: { orderBy: { createdAt: 'desc' as const } },
       refunds: true,
       invoices: true,
-      shipments: { include: { items: true, carrier: true } },
+      /* Le mode, pas seulement le transporteur : un colis planifié au
+         checkout porte le mode choisi par le client et n'a pas encore de
+         transporteur affecté. Sans lui, le back-office ne sait pas quoi
+         envoyer avec quoi. */
+      shipments: {
+        include: {
+          items: true,
+          carrier: true,
+          method: { include: { translations: true } },
+        },
+      },
       statusHistory: { orderBy: { createdAt: 'asc' as const } },
       returnRequests: { include: { items: true } },
     };
