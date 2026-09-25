@@ -5,6 +5,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { ShippingService } from '../shipping/shipping.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CartService } from '../cart/cart.service';
 import { CartCalculatorService } from '../cart/cart-calculator.service';
@@ -98,7 +99,8 @@ export class CheckoutService {
 
     const cartForCalculation = {
       ...cart,
-      shippingMethodId: dto.shippingMethodId,
+      shippingMethodId: dto.shippingMethodId ?? null,
+      shipments: dto.shipments,
       userId: userId ?? null,
     };
 
@@ -123,7 +125,8 @@ export class CheckoutService {
     if (
       totals.requiresShipping &&
       totals.shippingCents === 0 &&
-      !dto.shippingMethodId
+      !dto.shippingMethodId &&
+      !dto.shipments?.length
     ) {
       throw new BadRequestException('Un mode de livraison est requis.');
     }
@@ -205,6 +208,63 @@ export class CheckoutService {
           },
           include: { items: true },
         });
+
+        /* Commande en plusieurs colis : un `Shipment` par groupe, au statut
+           PENDING, avec ses articles et le mode choisi par le client.
+
+           C'est le plan d'expédition, pas l'expédition elle-même — le
+           commerçant le complétera avec le transporteur et le numéro de suivi.
+           L'écrire ici est le seul moyen qu'il sache quoi envoyer avec quoi :
+           la commande ne porte qu'un montant de port total. */
+        if (dto.shipments?.length) {
+          const chosen = new Map(
+            dto.shipments.map((entry) => [entry.constraint, entry]),
+          );
+
+          const shippable = totals.lines
+            .filter((line) => line.requiresShipping)
+            .map((line) => ({
+              cartItemId: line.cartItemId,
+              variantId: line.variantId,
+              quantity: line.quantity,
+              weightGrams: line.weightGrams,
+              isOversized: line.isOversized,
+              requiresColdChain: line.requiresColdChain,
+              lineTotalCents: line.lineTotalCents,
+            }));
+
+          // La ligne de commande porte la variante ; c'est par elle qu'on
+          // retrouve l'article correspondant, les identifiants de panier
+          // n'existant plus après conversion.
+          const orderItemByVariant = new Map(
+            created.items.map((item) => [item.variantId, item]),
+          );
+
+          for (const bucket of ShippingService.groupByConstraint(shippable)) {
+            const choice = chosen.get(bucket.constraint);
+            if (!choice) continue;
+
+            const items: { orderItemId: string; quantity: number }[] = [];
+
+            for (const line of bucket.lines) {
+              const item = orderItemByVariant.get(line.variantId);
+              if (item)
+                items.push({ orderItemId: item.id, quantity: line.quantity });
+            }
+
+            if (items.length === 0) continue;
+
+            await tx.shipment.create({
+              data: {
+                orderId: created.id,
+                methodId: choice.methodId,
+                slotId: choice.slotId ?? null,
+                status: 'PENDING',
+                items: { create: items },
+              },
+            });
+          }
+        }
 
         await this.inventory.reserveForOrder(
           tx,

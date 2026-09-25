@@ -70,6 +70,7 @@ model ShippingMethod {
   rates        ShippingRate[]
   slots        DeliverySlot[]
   carts        Cart[]
+  cartShipments CartShipment[]
   shipments    Shipment[]
 
   @@index([zoneId, position])
@@ -114,6 +115,7 @@ model DeliverySlot {
   isActive  Boolean        @default(true)
 
   carts     Cart[]
+  cartShipments CartShipment[]
   shipments Shipment[]
 
   @@unique([methodId, date, startTime])

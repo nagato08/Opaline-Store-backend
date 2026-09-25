@@ -25,6 +25,7 @@ import { ApplyCouponDto } from '../promotions/dto/promotion.dto';
 import {
   AddCartItemDto,
   SetCartContactDto,
+  SetCartShipmentsDto,
   SetShippingMethodDto,
   UpdateCartItemDto,
 } from './dto/cart.dto';
@@ -169,6 +170,28 @@ export class CartController {
       user?.id,
     );
     return this.cart.shippingPlan(cart.id, context);
+  }
+
+  /**
+   * Choix d'un mode par groupe, pour un panier qui part en plusieurs colis.
+   *
+   * Distinct de `shipping-method`, qui reste la voie normale du panier
+   * ordinaire : mêler les deux dans une seule route rendrait le cas courant
+   * plus difficile à lire pour servir l'exception.
+   */
+  @Patch('shipments')
+  async setShipments(
+    @Body() dto: SetCartShipmentsDto,
+    @Req() request: Request,
+    @Storefront() context: StorefrontContext,
+    @CurrentUser() user?: AuthenticatedUser,
+  ) {
+    const cart = await this.cart.getOrCreate(
+      this.token(request),
+      context,
+      user?.id,
+    );
+    return this.cart.setShipments(cart.id, dto.shipments, context);
   }
 
   @Patch('shipping-method')

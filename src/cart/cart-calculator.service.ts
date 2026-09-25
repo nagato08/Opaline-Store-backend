@@ -80,6 +80,8 @@ type CartInput = {
   currencyCode: string;
   locale: Locale;
   shippingMethodId: string | null;
+  /** Un mode par groupe, quand le panier part en plusieurs colis. */
+  shipments?: { constraint: string; methodId: string }[];
   couponCodes?: string[];
   userId?: string | null;
   items: {
@@ -417,7 +419,11 @@ export class CartCalculatorService {
     ratesByClass: Map<string, TaxLine[]>,
     taxTotals: Map<string, { line: TaxLine; amountCents: number }>,
   ): Promise<{ priceCents: number; taxCents: number }> {
-    if (!requiresShipping || !cart.shippingMethodId) {
+    if (!requiresShipping) {
+      return { priceCents: 0, taxCents: 0 };
+    }
+
+    if (!cart.shippingMethodId && !cart.shipments?.length) {
       return { priceCents: 0, taxCents: 0 };
     }
 
@@ -432,6 +438,58 @@ export class CartCalculatorService {
         requiresColdChain: line.requiresColdChain,
         lineTotalCents: line.lineTotalCents,
       }));
+
+    /* Panier scindé : chaque groupe est chiffré avec son propre mode, sur ses
+       propres lignes. La somme fait les frais de port de la commande.
+
+       La répartition réutilise `groupByConstraint`, la même règle que le plan
+       proposé au client : c'est la seule façon de garantir qu'il paie pour ce
+       qu'il a choisi. */
+    if (cart.shipments?.length) {
+      const chosen = new Map(
+        cart.shipments.map((entry) => [entry.constraint, entry.methodId]),
+      );
+
+      let priceCents = 0;
+      let taxCents = 0;
+
+      for (const bucket of ShippingService.groupByConstraint(shippable)) {
+        const methodId = chosen.get(bucket.constraint);
+        if (!methodId) continue;
+
+        const groupQuote = await this.shipping
+          .quoteForMethod(
+            methodId,
+            { countryCode: country, region },
+            bucket.lines,
+            cart.currencyCode,
+            cart.locale,
+          )
+          .catch(() => null);
+
+        if (!groupQuote) continue;
+
+        const groupPrice = freeShipping ? 0 : groupQuote.priceCents;
+        if (groupPrice === 0) continue;
+
+        const rates = groupQuote.taxClassId
+          ? (ratesByClass.get(groupQuote.taxClassId) ??
+            (await this.tax.ratesFor(country, groupQuote.taxClassId, region)))
+          : [];
+
+        const taxed = this.tax.apply(groupPrice, rates, pricesIncludeTax);
+        this.accumulateTax(taxTotals, taxed.lines);
+
+        priceCents += groupPrice;
+        taxCents += taxed.taxCents;
+      }
+
+      return { priceCents, taxCents };
+    }
+
+    if (!cart.shippingMethodId) {
+      return { priceCents: 0, taxCents: 0 };
+    }
 
     const quote = await this.shipping
       .quoteForMethod(

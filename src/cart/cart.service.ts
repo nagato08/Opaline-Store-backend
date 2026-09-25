@@ -43,6 +43,9 @@ export class CartService {
 
   private get cartInclude() {
     return {
+      /* Les modes par groupe, sans quoi un panier scindé se calculerait
+         comme s'il n'avait aucune livraison choisie. */
+      shipments: true,
       items: {
         orderBy: { addedAt: 'asc' as const },
         include: {
@@ -374,6 +377,40 @@ export class CartService {
       cart.currencyCode,
       cart.locale,
     );
+  }
+
+  /**
+   * Enregistre un mode de livraison par groupe physique.
+   *
+   * Remplace l'ensemble à chaque appel plutôt que de compléter : un panier
+   * modifié entre-temps peut ne plus avoir de groupe réfrigéré, et un choix
+   * resté en base le ferait facturer.
+   *
+   * `shippingMethodId` est effacé : les deux mécanismes s'excluent, et les
+   * laisser coexister ferait payer deux fois la livraison.
+   */
+  async setShipments(
+    cartId: string,
+    choices: { constraint: string; methodId: string; slotId?: string }[],
+    context: StorefrontContext,
+  ) {
+    await this.prisma.$transaction([
+      this.prisma.cartShipment.deleteMany({ where: { cartId } }),
+      this.prisma.cartShipment.createMany({
+        data: choices.map((choice) => ({
+          cartId,
+          constraint: choice.constraint,
+          methodId: choice.methodId,
+          slotId: choice.slotId ?? null,
+        })),
+      }),
+      this.prisma.cart.update({
+        where: { id: cartId },
+        data: { shippingMethodId: null, deliverySlotId: null },
+      }),
+    ]);
+
+    return this.summary(cartId, context);
   }
 
   /**

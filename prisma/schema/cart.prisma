@@ -29,10 +29,16 @@ model Cart {
   guestShipping     Json?
   guestBilling      Json?
 
+  /// Mode unique, pour un panier qui part en une seule fois — le cas courant.
   shippingMethodId String?
   shippingMethod   ShippingMethod? @relation(fields: [shippingMethodId], references: [id], onDelete: SetNull)
   deliverySlotId   String?
   deliverySlot     DeliverySlot?   @relation(fields: [deliverySlotId], references: [id], onDelete: SetNull)
+
+  /// Un mode par groupe physique, quand le panier doit partir en plusieurs
+  /// colis. Vide tant qu'un seul transporteur suffit : `shippingMethodId`
+  /// reste alors la source, et rien ne change pour les paniers existants.
+  shipments CartShipment[]
 
   /// Codes saisis par le client ; le montant réel est recalculé à chaque lecture.
   couponCodes   String[]
@@ -84,4 +90,30 @@ model CartItem {
 
   @@unique([cartId, variantId])
   @@index([variantId])
+}
+
+/// Mode de livraison retenu pour un groupe d'articles du panier.
+///
+/// Un meuble hors gabarit et une denrée réfrigérée n'ont aucun transporteur
+/// commun : la commande part alors en deux colis, chacun avec son mode, son
+/// créneau et son tarif. Le groupe est désigné par sa contrainte physique, pas
+/// par une liste d'articles — la répartition se déduit des lignes et ne peut
+/// donc pas se désynchroniser du panier.
+model CartShipment {
+  id     String @id @default(cuid())
+  cartId String
+  cart   Cart   @relation(fields: [cartId], references: [id], onDelete: Cascade)
+
+  /// COLD_CHAIN, OVERSIZED ou STANDARD.
+  constraint String
+
+  methodId String
+  method   ShippingMethod @relation(fields: [methodId], references: [id], onDelete: Cascade)
+  slotId   String?
+  slot     DeliverySlot?  @relation(fields: [slotId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+
+  /// Un seul mode par groupe : choisir deux fois remplace, jamais n'ajoute.
+  @@unique([cartId, constraint])
 }

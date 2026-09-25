@@ -49,6 +49,40 @@ export class ShippingService {
   constructor(private readonly prisma: PrismaService) {}
 
   /**
+   * Répartit des lignes en familles physiques.
+   *
+   * Le froid prime sur le gabarit : un colis réfrigéré encombrant part en
+   * camion frigorifique, pas chez un transporteur de meubles.
+   *
+   * **Statique et unique.** Le plan de livraison et le calcul des totaux
+   * doivent répartir à l'identique, sinon le client choisit un mode pour un
+   * groupe et se voit facturer un autre. Dupliquer cette règle serait garantir
+   * qu'elle diverge.
+   */
+  static groupByConstraint(
+    lines: ShippableLine[],
+  ): Array<{ constraint: ShippingConstraint; lines: ShippableLine[] }> {
+    return [
+      {
+        constraint: 'COLD_CHAIN' as const,
+        lines: lines.filter((line) => line.requiresColdChain),
+      },
+      {
+        constraint: 'OVERSIZED' as const,
+        lines: lines.filter(
+          (line) => line.isOversized && !line.requiresColdChain,
+        ),
+      },
+      {
+        constraint: 'STANDARD' as const,
+        lines: lines.filter(
+          (line) => !line.isOversized && !line.requiresColdChain,
+        ),
+      },
+    ].filter((bucket) => bucket.lines.length > 0);
+  }
+
+  /**
    * Plan de livraison du panier.
    *
    * Répond à une question que `quote` ne sait pas poser : *pourquoi* aucun mode
@@ -73,30 +107,7 @@ export class ShippingService {
       return { splitRequired: false, combined, groups: [] };
     }
 
-    /* Trois familles physiques, dans cet ordre : le froid prime sur le gabarit
-       — un colis réfrigéré encombrant part en camion frigorifique, pas chez un
-       transporteur de meubles. */
-    const buckets: Array<{
-      constraint: ShippingConstraint;
-      lines: ShippableLine[];
-    }> = [
-      {
-        constraint: 'COLD_CHAIN' as const,
-        lines: lines.filter((line) => line.requiresColdChain),
-      },
-      {
-        constraint: 'OVERSIZED' as const,
-        lines: lines.filter(
-          (line) => line.isOversized && !line.requiresColdChain,
-        ),
-      },
-      {
-        constraint: 'STANDARD' as const,
-        lines: lines.filter(
-          (line) => !line.isOversized && !line.requiresColdChain,
-        ),
-      },
-    ].filter((bucket) => bucket.lines.length > 0);
+    const buckets = ShippingService.groupByConstraint(lines);
 
     // Une seule famille : le panier est simplement non livrable ici, pas à scinder.
     if (buckets.length < 2) {

@@ -1,5 +1,7 @@
 import { Type } from 'class-transformer';
 import {
+  IsArray,
+  IsIn,
   IsBoolean,
   IsEmail,
   IsNumber,
@@ -113,6 +115,28 @@ export class SetCartContactDto {
   @IsString()
   @MaxLength(500)
   customerNote?: string;
+}
+
+/** Un mode retenu pour un groupe physique du panier. */
+export class CartShipmentChoiceDto {
+  @IsIn(['COLD_CHAIN', 'OVERSIZED', 'STANDARD'])
+  constraint: string;
+
+  @IsString()
+  methodId: string;
+
+  @IsOptional()
+  @IsString()
+  slotId?: string;
+}
+
+export class SetCartShipmentsDto {
+  /* `@Type` est indispensable : sans lui, `enableImplicitConversion` vide un
+     tableau d'objets typé `Array` — le piège numéro trois du projet. */
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => CartShipmentChoiceDto)
+  shipments: CartShipmentChoiceDto[];
 }
 
 export class SetShippingMethodDto {
